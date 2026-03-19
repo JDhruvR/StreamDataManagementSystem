@@ -1,0 +1,25 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Kafka Directories and Archives
+kafka_*/
+*.tgz
+*.tar.gz
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,55 @@
+Streaming Data Management System - Implementation Plan
+Goal Description
+The objective is to build an extensible Streaming Data Management System in Python. The system will ingest simulated sensor data (e.g., pollution data) via a message queue (Kafka), process the data stream using a custom query engine, and support a Data Definition Language (DDL) and Data Manipulation Language (DML) based on a custom grammar (parsed using Lark). The processed output will be written to static tables or a new output stream.
+
+Architectural Overview
+Sensor Simulator: A Python script to generate real-time pollution data and publish it to a Kafka topic.
+Message Broker (Kafka): Handles the reliable ingestion of stream data. The user will start a local native Kafka instance natively.
+DDL/DML Parser (Lark): Defines the grammar for creating streams/tables, and writing continuous queries (e.g., SELECT * FROM pollution_stream WHERE value > 50).
+Execution Engine: Consumes streams, applies the parsed query operators (Filter, Map, Aggregate, Window), and manages states.
+Storage Manager: Handles reading from and writing to static tables (in-memory or SQLite) and publishing output streams to Kafka.
+Proposed Changes
+Configuration and Setup
+[NEW] requirements.txt
+Dependencies including kafka-python, lark, pandas (for table operations), etc.
+
+Core Engine (core/)
+[NEW] core/__init__.py
+[NEW] core/parser/grammar.lark
+The Lark grammar file defining statements like CREATE STREAM, CREATE TABLE, INSERT INTO, SELECT ... FROM ... WINDOW ....
+
+[NEW] core/parser/sql_parser.py
+A visitor/transformer that takes the parsed Lark tree and translates it into logical query plans.
+
+[NEW] core/execution/operators.py
+Abstractions for stream operations: Source, Filter, Map, Window, Sink.
+
+[NEW] core/execution/engine.py
+The orchestrator that links the query plan operators together and drives the actual streaming execution.
+
+[NEW] core/storage/table.py
+Simple abstraction over an in-memory dictionary or SQLite for storing and querying static table data.
+
+Streaming Adapters (streaming/)
+[NEW] streaming/__init__.py
+[NEW] streaming/kafka_client.py
+Wrapper classes for KafkaProducer and KafkaConsumer.
+
+Data Simulators (sensors/)
+[NEW] sensors/__init__.py
+[NEW] sensors/pollution_sensor.py
+Generates mock pollution data (timestamp, sensor_id, pollutant, value) and sends it to the configured Kafka topic.
+
+Examples (examples/)
+[NEW] examples/run_system.py
+An end-to-end script that sets up a table, defines a stream query, starts the engine, and consumes the output.
+
+Verification Plan
+Automated Tests
+We will write unit tests using pytest for the Parser (test_parser.py) to verify that the Lark grammar correctly parses various DDL and queries.
+We will write unit tests for the Execution Engine operators (test_operators.py) using simulated in-memory lists before connecting to Kafka.
+Manual Verification
+Ensure your local native Kafka instance is running.
+Run python -m sensors.pollution_sensor to start data generation.
+Run python -m examples.run_system to execute a sample query parser and engine.
+Verify that filtered/aggregated data appears in the standard output or the designated sink table.
