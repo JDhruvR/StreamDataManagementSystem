@@ -1,0 +1,17 @@
+create a venv, pip install -r requirements.txt
+
+wget https://archive.apache.org/dist/kafka/3.6.1/kafka_2.13-3.6.1.tgz
+tar -xzf kafka_2.13-3.6.1.tgz
+cd kafka_2.13-3.6.1
+
+# terminal 1 (inside kafka folder)
+bin/zookeeper-server-start.sh config/zookeeper.properties
+
+# terminal 2 (inside kafka folder)
+bin/kafka-server-start.sh config/server.properties
+
+terminal 3: (outside kafka)
+python -m sensors.pollution_sensor
+
+terminal 4: (outside kafka)
+python -m examples.run_system
