@@ -13,14 +13,13 @@ class SQLTransformer(Transformer):
         return items[0].value
 
     def literal(self, items):
-        # Could parse float/int properly here based on string
         val = items[0].value
         if '.' in val:
             return float(val)
         return int(val)
 
     def string_literal(self, items):
-        return items[0].value[1:-1] # Remove quotes
+        return items[0].value[1:-1]  # Remove quotes
 
     def data_type(self, items):
         return items[0].value
@@ -78,15 +77,6 @@ class SQLTransformer(Transformer):
             return "*"
         return list(items)
 
-    def window_type(self, items):
-        return items[0].value
-
-    def literal_unit(self, items):
-        return items[0].value
-
-    def window_clause(self, items):
-        return {"type": items[0], "size": items[1], "unit": items[2]}
-
     def select_query(self, items):
         query = {
             "type": "select_query",
@@ -94,13 +84,11 @@ class SQLTransformer(Transformer):
             "from": items[1]
         }
         
-        # Determine optional clauses based on what was parsed
-        for item in items[2:]:
-            if isinstance(item, dict):
-                if "field" in item and "operator" in item:
+        # Parse WHERE clause if present
+        if len(items) > 2:
+            for item in items[2:]:
+                if isinstance(item, dict) and "field" in item and "operator" in item:
                     query["where"] = item
-                elif "type" in item and "size" in item:
-                    query["window"] = item
 
         return query
 
@@ -110,9 +98,11 @@ class SQLTransformer(Transformer):
     def start(self, items):
         return list(items)
 
+
 def parse_sql(sql_text):
     tree = parser.parse(sql_text)
     return SQLTransformer().transform(tree)
+
 
 if __name__ == '__main__':
     # Test parser
@@ -131,10 +121,10 @@ if __name__ == '__main__':
 
     SELECT sensor_id, AVG(value)
     FROM pollution_stream
-    WINDOW TUMBLING (60 SECONDS)
     WHERE value > 50.0;
     """
     
     parsed = parse_sql(sql.strip())
     import json
     print(json.dumps(parsed, indent=2))
+

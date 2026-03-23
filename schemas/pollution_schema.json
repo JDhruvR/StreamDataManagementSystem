@@ -1,0 +1,39 @@
+{
+  "schema_name": "pollution_monitoring_v1",
+  "window_size": 10,
+  "window_unit": "seconds",
+  "velocity": {
+    "type": "count",
+    "value": 100
+  },
+  "input_streams": [
+    {
+      "name": "pollution_stream",
+      "topic": "pollution_stream",
+      "schema": {
+        "timestamp": "STRING",
+        "sensor_id": "STRING",
+        "pollutant": "STRING",
+        "value": "FLOAT"
+      }
+    }
+  ],
+  "continuous_queries": [
+    {
+      "name": "high_pollution_alert",
+      "input_stream": "pollution_stream",
+      "output_stream": "high_pollution_alerts",
+      "query": "SELECT sensor_id, AVG(value) FROM pollution_stream WHERE value > 50.0"
+    }
+  ],
+  "output_streams": [
+    {
+      "name": "high_pollution_alerts",
+      "topic": "high_pollution_alerts",
+      "schema": {
+        "sensor_id": "STRING",
+        "avg_value": "FLOAT"
+      }
+    }
+  ]
+}

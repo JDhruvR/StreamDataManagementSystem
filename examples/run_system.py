@@ -1,70 +1,151 @@
+"""
+StreamDataManagementSystem: Main application.
+
+Schema-based streaming data processing using continuous queries.
+All queries are pre-defined in schema configuration files.
+"""
+
 import json
 import threading
 import time
+from core.schema.schema_manager import SchemaManager
+from core.execution.schema_registry import get_global_registry
 from streaming.kafka_client import StreamConsumer
-from core.execution.engine import ExecutionEngine
+from streaming.kafka_config import get_default_config
+
 
 def output_callback(event):
-    print(f"\\n>>> [ALERT] High Pollution Detected: {event}\\n")
+    """Default output callback for alerts."""
+    print(f"\n>>> [ALERT] {json.dumps(event, indent=2)}\n")
 
-def run_kafka_consumer(engine, topic, source_stream_name):
-    print(f"Starting Kafka consumer for topic '{topic}'...")
+
+def run_kafka_consumer(schema_name, stream_name, registry, topic, group_id):
+    """
+    Consume messages from Kafka topic and feed to engine.
+    
+    Runs in a background thread for each input stream.
+    """
+    print(f"  Consumer started for {schema_name}/{stream_name} (topic: {topic})")
+    
     try:
-        consumer = StreamConsumer(topic=topic, group_id='query_engine_group')
+        config = get_default_config()
+        consumer = StreamConsumer(
+            topic=topic,
+            group_id=group_id,
+            config=config
+        )
+        
         for msg in consumer:
-            # Feed data into the execution engine
-            engine.process_event(source_stream_name, msg)
+            try:
+                registry.process_event(schema_name, stream_name, msg)
+            except Exception as e:
+                print(f"  Error processing event: {e}")
+    
     except Exception as e:
-        print(f"Kafka consumer error: {e}")
-        print("Please ensure Kafka is running and `sensors/pollution_sensor.py` is producing data.")
+        print(f"  Kafka consumer error for {stream_name}: {e}")
+        print(f"  Make sure Kafka is running and {stream_name} is producing data.")
+
 
 def main():
-    engine = ExecutionEngine()
-
-    # 1. Provide DDL to create stream and table
-    print("Initializing System...")
-    ddl_statements = """
-    CREATE STREAM pollution_stream (
-        timestamp STRING,
-        sensor_id STRING,
-        pollutant STRING,
-        value FLOAT
-    ) WITH (topic="pollution_stream")
-
-    CREATE TABLE high_pollution_table (
-        sensor_id STRING,
-        avg_value FLOAT
-    )
-    """
-    engine.handle_statement(ddl_statements.strip())
-
-    # 2. Provide a Continuous Query
-    print("\\nDeploying Continuous Query...")
-    # Find average pollution per window for sensors that read very high values over 50.
-    query = """
-    SELECT sensor_id, AVG(value)
-    FROM pollution_stream
-    WINDOW TUMBLING (10 SECONDS)
-    WHERE value > 50.0
-    """
-    # The callback will print output. In reality, engine would sink to table or stream
-    engine.handle_statement(query.strip(), callback=output_callback)
-
-    # 3. Start a background thread to consume from Kafka and feed the engine
-    topic = "pollution_stream"
-    consumer_thread = threading.Thread(
-        target=run_kafka_consumer, 
-        args=(engine, topic, "pollution_stream"),
-        daemon=True
-    )
-    consumer_thread.start()
-
-    print("\\nSystem is running. Press Ctrl+C to stop.")
+    """Main entry point."""
+    print("=" * 60)
+    print("StreamDataManagementSystem v1.0 - Schema-Based")
+    print("=" * 60)
+    print()
+    
+    # Step 1: Load schema
+    print("Step 1: Load Schema")
+    print("-" * 60)
+    
+    schema_manager = SchemaManager()
+    
+    # Try to load example schema first, or prompt for input
     try:
+        schema = schema_manager.load_from_file('schemas/pollution_schema.json')
+        print()
+    except FileNotFoundError:
+        print("  Using interactive schema input...")
+        try:
+            schema = schema_manager.load_from_input()
+            print()
+        except Exception as e:
+            print(f"  Error loading schema: {e}")
+            return
+    except Exception as e:
+        print(f"  Error: {e}")
+        return
+    
+    schema_name = schema_manager.get_schema_name()
+    print(f"Loaded schema: {schema_name}")
+    print()
+    
+    # Step 2: Deploy schema to registry
+    print("Step 2: Deploy Schema")
+    print("-" * 60)
+    
+    registry = get_global_registry()
+    
+    try:
+        engine = registry.register_schema(schema)
+    except Exception as e:
+        print(f"  Error deploying schema: {e}")
+        return
+    
+    print()
+    
+    # Print schema summary
+    print(f"Schema Summary:")
+    print(f"  Window: {schema['window_size']} {schema['window_unit']}")
+    print(f"  Velocity: {schema['velocity']}")
+    
+    input_streams = engine.get_input_streams()
+    output_streams = engine.get_output_streams()
+    queries = engine.get_queries()
+    
+    print(f"  Input Streams: {', '.join(input_streams.keys())}")
+    print(f"  Output Streams: {', '.join(output_streams.keys())}")
+    print(f"  Continuous Queries: {len(queries)}")
+    for q in queries:
+        print(f"    - {q['name']}: {q['input_stream']} -> {q['output_stream']}")
+    print()
+    
+    # Step 3: Start Kafka consumers
+    print("Step 3: Starting Kafka Consumers")
+    print("-" * 60)
+    
+    config = get_default_config()
+    print(f"Kafka Mode: {config.get_mode_description()}")
+    print(f"Broker: {config.get_broker()}")
+    print()
+    
+    consumers = []
+    for stream_name, stream_config in input_streams.items():
+        topic = stream_config['topic']
+        group_id = f"{schema_name}_{stream_name}_consumer"
+        
+        # Start consumer in background thread
+        thread = threading.Thread(
+            target=run_kafka_consumer,
+            args=(schema_name, stream_name, registry, topic, group_id),
+            daemon=True
+        )
+        thread.start()
+        consumers.append(thread)
+    
+    print()
+    print("=" * 60)
+    print("System Running. Press Ctrl+C to stop.")
+    print("=" * 60)
+    print()
+    
+    try:
+        # Keep main thread alive
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\\nShutting down system...")
+        print("\n\nShutting down...")
+        print("✓ System stopped")
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()

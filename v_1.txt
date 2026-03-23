@@ -1,0 +1,215 @@
+STREAMDATAMANAGEMENTSYSTEM v1.0 - RELEASE NOTES
+================================================
+
+FEATURES ADDED
+==============
+
+1. SCHEMA-BASED CONFIGURATION
+   - JSON schema files define all aspects of streaming deployment
+   - Schema includes input streams, output streams, and continuous queries
+   - Load schemas from files or interactive terminal input
+   - Save and validate schemas before deployment
+   - Location: core/schema/schema_manager.py
+
+2. MULTIPLE SCHEMAS SUPPORT
+   - Run multiple schemas concurrently in same engine
+   - Each schema has isolated input/output streams and queries
+   - No cross-schema interference or naming conflicts
+   - SchemaRegistry manages schema lifecycle
+   - Location: core/execution/schema_registry.py
+
+3. CONTINUOUS QUERIES (PRE-DEFINED ONLY)
+   - Queries declared in schema, not ad-hoc
+   - Query maps input stream -> processing pipeline -> output stream
+   - Single query: one input stream, one output stream
+   - Window size and velocity fixed per schema (apply to all queries)
+   - No per-query window parameters
+
+4. KAFKA IN-MEMORY MODE (DEFAULT)
+   - Messages ephemeral by default (retention.ms=1)
+   - No persistence to disk
+   - Aligns with philosophy of not saving input streams
+   - Configurable: can enable persistence if needed
+   - Location: streaming/kafka_config.py
+
+5. STREAM MANAGEMENT
+   - Input streams registered independently
+   - Streams without queries supported (can dump data)
+   - Multiple input/output streams per schema
+   - Events routed by stream name, not query name
+
+6. VELOCITY CONFIGURATION
+   - Flexible velocity type (count-based currently, time-based extensible)
+   - Defined per schema in JSON: {"type": "count", "value": 100}
+   - Applies globally to all queries in schema
+
+FEATURES REMOVED / CHANGED
+==========================
+
+1. AD-HOC QUERY SUPPORT REMOVED
+   - No more inline query execution via run_system.py
+   - ExecutionEngine.execute_query() removed
+   - ExecutionEngine.handle_statement() removed
+   - Queries must be pre-defined in schema
+
+2. PER-QUERY WINDOW PARAMETERS REMOVED
+   - Grammar: WINDOW clause removed from SELECT statement
+   - Window size/unit no longer inline with query
+   - All queries in schema share schema-level window config
+   - core/parser/grammar.lark updated
+
+3. HARDCODED DDL REMOVED
+   - No more DDL in Python code
+   - Stream and table definitions moved to schema JSON
+   - examples/run_system.py refactored to load schemas
+
+4. KAFKA PERSISTENCE DISABLED BY DEFAULT
+   - Previous: Messages persisted to disk by default
+   - Current: retention.ms=1 (ephemeral)
+   - Consistent with stream input philosophy
+
+
+API CHANGES
+===========
+
+ExecutionEngine:
+  - REMOVED: execute_query(query_plan, output_callback)
+  - REMOVED: handle_statement(sql_text, callback)
+  - REMOVED: execute_ddl(statement)
+  - NEW:     initialize_from_schema(schema)
+  - CHANGED: process_event(source_stream, event)
+             now requires stream_name, validates stream exists
+
+Parser (Grammar):
+  - REMOVED: window_clause: "WINDOW" window_type "(" literal literal_unit ")"
+  - Query syntax: SELECT select_list FROM identifier [WHERE condition]
+  - No window parameters inline
+
+StreamProducer/StreamConsumer:
+  - ADDED parameter: config (KafkaConfig instance)
+  - BACKWARDS COMPATIBLE: bootstrap_servers still works
+
+
+FILE STRUCTURE CHANGES
+======================
+
+NEW DIRECTORIES:
+  core/schema/              - Schema management
+  schemas/                  - Schema configuration files
+
+NEW FILES:
+  core/schema/schema_manager.py      - Schema loading/validation
+  core/execution/schema_registry.py  - Multi-schema management
+  streaming/kafka_config.py          - Kafka configuration
+  schemas/pollution_schema.json      - Example schema
+
+MODIFIED FILES:
+  core/execution/engine.py           - Schema-based, removed ad-hoc
+  core/execution/operators.py        - SinkOperator output stream support
+  core/parser/grammar.lark           - Removed WINDOW clause
+  core/parser/sql_parser.py          - Updated transformer
+  streaming/kafka_client.py          - Added config parameter
+  examples/run_system.py             - Complete refactor
+
+
+SCHEMA JSON FORMAT
+==================
+
+{
+  "schema_name": "string",
+  "window_size": number,
+  "window_unit": "seconds|minutes|hours",
+  "velocity": {"type": "count|time", "value": number},
+  "input_streams": [
+    {
+      "name": "stream_name",
+      "topic": "kafka_topic",
+      "schema": {"column": "DATA_TYPE", ...}
+    }
+  ],
+  "continuous_queries": [
+    {
+      "name": "query_name",
+      "input_stream": "stream_name",
+      "output_stream": "stream_name",
+      "query": "SELECT ... FROM ... [WHERE ...]"
+    }
+  ],
+  "output_streams": [
+    {
+      "name": "stream_name",
+      "topic": "kafka_topic",
+      "schema": {"column": "DATA_TYPE", ...}
+    }
+  ]
+}
+
+
+MIGRATION GUIDE
+===============
+
+1. Convert hardcoded queries to schema JSON
+   - Extract stream/table definitions
+   - Extract query with WHERE clause (no WINDOW keyword)
+   - Define window_size, window_unit, velocity
+
+2. Load schema at startup
+   from core.schema.schema_manager import SchemaManager
+   manager = SchemaManager()
+   schema = manager.load_from_file('path/to/schema.json')
+
+3. Deploy schema to registry
+   from core.execution.schema_registry import get_global_registry
+   registry = get_global_registry()
+   engine = registry.register_schema(schema)
+
+4. Process events
+   registry.process_event(schema_name, stream_name, event)
+
+5. Example schema: schemas/pollution_schema.json
+
+
+BACKWARDS COMPATIBILITY
+=======================
+
+NOT COMPATIBLE: Code using ad-hoc ExecutionEngine API will break
+  - execute_query() removed
+  - handle_statement() removed
+  - process_event() signature changed
+
+COMPATIBLE:
+  - Kafka producer/consumer still work with old bootstrap_servers param
+  - Parser still handles CREATE TABLE/STREAM statements
+
+
+KNOWN LIMITATIONS
+=================
+
+- No stream joins (out of scope)
+- Single query = 1 input stream -> 1 output stream only
+- Window type fixed to TUMBLING (SLIDING simplified in v1)
+- GROUP BY only partially supported
+- Error handling basic (no recovery/retry)
+- No query hot-reload (must restart to change schema)
+
+
+TESTING RECOMMENDATIONS
+=======================
+
+1. Unit test SchemaManager (load, validate, save)
+2. Integration test schema -> engine -> operators
+3. End-to-end test with example schema
+4. Verify Kafka in-memory mode (no disk writes)
+5. Multi-schema coexistence test
+
+
+NEXT STEPS FOR FUTURE VERSIONS
+===============================
+
+- Stream join support
+- Query hot-reload without restart
+- Enhanced error handling and recovery
+- Query composition/reuse
+- Performance optimization
+- Monitoring and metrics
+- Schema versioning

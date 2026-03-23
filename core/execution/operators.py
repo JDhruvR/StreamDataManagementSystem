@@ -119,13 +119,21 @@ class AggregateOperator(Operator):
             print(f"Aggregation error: {e}")
 
 class SinkOperator(Operator):
-    def __init__(self, target_table=None, callback=None):
+    def __init__(self, target_table=None, target_stream=None, target_topic=None, callback=None):
         self.target_table = target_table
+        self.target_stream = target_stream
+        self.target_topic = target_topic
         self.callback = callback
 
     def process(self, event):
         if self.callback:
             self.callback(event)
+        
         if self.target_table:
             from core.storage.table import storage
             storage.insert(self.target_table, event)
+        
+        if self.target_stream and self.target_topic:
+            from streaming.kafka_client import StreamProducer
+            producer = StreamProducer()
+            producer.send(self.target_topic, event)

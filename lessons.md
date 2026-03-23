@@ -1,0 +1,8 @@
+- multiple stream joins
+- static joins
+- schema file multiple streams allowed.
+- kafka persistent so remove persistence.
+- window size is fixed in schema for the whole sdms and all the queries that are gonna be there have to follow that window. also have velocity that is fixed per schema.
+- for no adhoc queries lets not support but lets support multiple continuos queries that are defined as part of schema itself.
+- fix kafka persistence having kafka have persistence is philosophically challenging sdms constraints which is daa keeps coming and we cant save input data which is a stream
+- window size or velocity blocks or seconds (both)
