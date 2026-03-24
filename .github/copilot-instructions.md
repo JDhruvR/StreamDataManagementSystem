@@ -1,8 +1,16 @@
 # Copilot Instructions for StreamDataManagementSystem
 
+## Writing Guidelines for This Project
+
+CRITICAL RULES:
+- Keep writing concise and direct. No verbose explanations.
+- Never use emojis in files or terminal output. Never.
+- Document must be brief, practical, focused on implementation.
+- Avoid marketing language, abstractions, or flowery descriptions.
+
 ## Project Overview
 
-This is an **Extensible Streaming Data Management System** that processes real-time data from IoT sensors using a custom SQL-like query language. The architecture follows a four-stage pipeline: Data Generation → Kafka → Query Parsing → Execution Engine → Output.
+This is a streaming data processing system that routes events through operator pipelines defined in JSON schemas. Data flows: Kafka producer -> JSON schema -> schema registry -> operator chain -> Kafka output/storage.
 
 ## Quick Start
 
@@ -28,14 +36,8 @@ python -m examples.run_system
 
 ### Running Tests
 ```bash
-# Single test file
 pytest test_ast.py -v
-
-# All tests (currently minimal coverage)
 pytest -v
-
-# Tests with output
-pytest -s
 ```
 
 ## Architecture
