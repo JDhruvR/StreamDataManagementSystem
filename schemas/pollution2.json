@@ -1,0 +1,39 @@
+{
+  "schema_name": "pollution2",
+  "window_size": 10,
+  "window_unit": "seconds",
+  "velocity": {
+    "type": "count",
+    "value": 100
+  },
+  "input_streams": [
+    {
+      "name": "pollution_stream",
+      "topic": "pollution_stream",
+      "schema": {
+        "timestamp": "STRING",
+        "sensor_id": "STRING",
+        "pollutant": "STRING",
+        "value": "FLOAT"
+      }
+    }
+  ],
+  "continuous_queries": [
+    {
+      "name": "avg_pollution",
+      "input_stream": "pollution_stream",
+      "output_stream": "pollution_out",
+      "query": "SELECT AVG(value), name FROM pollution_stream INNER JOIN sensors ON sensor_id = id"
+    }
+  ],
+  "output_streams": [
+    {
+      "name": "pollution_out",
+      "topic": "pollution_out",
+      "schema": {
+        "sensor_id": "STRING",
+        "avg_value": "FLOAT"
+      }
+    }
+  ]
+}

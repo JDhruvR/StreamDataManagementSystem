@@ -6,7 +6,7 @@ No ad-hoc queries. Window size and velocity are fixed per schema.
 """
 
 from core.parser.sql_parser import parse_sql
-from core.execution.operators import FilterOperator, WindowOperator, AggregateOperator, SinkOperator
+from core.execution.operators import FilterOperator, WindowOperator, AggregateOperator, SinkOperator, JoinOperator
 from core.storage.table import storage
 from typing import Dict, List, Any, Optional, Callable
 
@@ -137,6 +137,7 @@ class ExecutionEngine:
         2. Aggregate (if aggregation in query)
         3. Window (using schema-level config)
         4. Filter (using WHERE clause)
+        5. Join (if INNER JOIN specified)
         """
         # Sink operator (final stage)
         output_topic = self.output_streams[output_stream_name]['topic']
@@ -155,7 +156,12 @@ class ExecutionEngine:
                     group_by.append(item)
         
         if agg_config:
-            pipeline = AggregateOperator(agg_config, group_by_fields=group_by, next_op=pipeline)
+            pipeline = AggregateOperator(
+                agg_config,
+                group_by_fields=group_by,
+                next_op=pipeline,
+                select_list=select_list,
+            )
         
         # Window operator (using schema-level config, NOT query-level)
         window_config = {
@@ -168,6 +174,20 @@ class ExecutionEngine:
         # Filter operator (if WHERE clause exists)
         if 'where' in query_plan:
             pipeline = FilterOperator(query_plan['where'], next_op=pipeline)
+
+        # Join operator (currently supports stream -> table INNER JOIN)
+        if 'join' in query_plan:
+            join_cfg = query_plan['join']
+            join_type = join_cfg.get('join_type', 'INNER')
+            if join_type != 'INNER':
+                raise ValueError(f"Unsupported join type: {join_type}")
+
+            pipeline = JoinOperator(
+                table_name=join_cfg['table'],
+                left_field=join_cfg['left_field'],
+                right_field=join_cfg['right_field'],
+                next_op=pipeline,
+            )
         
         return pipeline
     

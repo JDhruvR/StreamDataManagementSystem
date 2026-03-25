@@ -1,4 +1,6 @@
 import time
+import os
+import sqlite3
 from abc import ABC, abstractmethod
 from collections import deque
 import statistics
@@ -77,10 +79,11 @@ class WindowOperator(Operator):
             self.next_op.process(list(self.buffer))
 
 class AggregateOperator(Operator):
-    def __init__(self, agg_config, group_by_fields=[], next_op=None):
+    def __init__(self, agg_config, group_by_fields=[], next_op=None, select_list=None):
         self.agg_config = agg_config
         self.group_by = group_by_fields
         self.next_op = next_op
+        self.select_list = select_list if isinstance(select_list, list) else []
 
     def process(self, events):
         # Expects a list of events (e.g. from a window)
@@ -91,32 +94,99 @@ class AggregateOperator(Operator):
 
         func = self.agg_config['func']
         field = self.agg_config['field']
-        
-        # Simple non-grouped aggregation for now
-        # Expand later for complex GROUP BY
+
+        # If non-aggregate fields are selected, aggregate per unique key tuple.
         try:
-            values = [e[field] for e in events if field in e]
-            if not values:
-                return
+            groups = {}
+            if self.group_by:
+                for event in events:
+                    key = tuple(event.get(gb_field) for gb_field in self.group_by)
+                    groups.setdefault(key, []).append(event)
+            else:
+                groups[()] = events
 
-            result_val = None
-            if func == 'COUNT': result_val = len(values)
-            elif func == 'SUM': result_val = sum(values)
-            elif func == 'AVG': result_val = statistics.mean(values)
-            elif func == 'MAX': result_val = max(values)
-            elif func == 'MIN': result_val = min(values)
+            for key, grouped_events in groups.items():
+                values = [e[field] for e in grouped_events if field in e]
+                if not values:
+                    continue
 
-            result_event = {"aggregate": func, "field": field, "value": result_val}
-            
-            # Carry over group_by fields if they are common (simplified)
-            for gb_field in self.group_by:
-                 if gb_field in events[0]:
-                     result_event[gb_field] = events[0][gb_field]
-                     
-            if self.next_op:
-                self.next_op.process(result_event)
+                result_val = None
+                if func == 'COUNT': result_val = len(values)
+                elif func == 'SUM': result_val = sum(values)
+                elif func == 'AVG': result_val = statistics.mean(values)
+                elif func == 'MAX': result_val = max(values)
+                elif func == 'MIN': result_val = min(values)
+
+                agg_col_name = f"{func}({field})"
+
+                # Build output in SELECT order, matching SQL-like projection shape.
+                if self.select_list:
+                    result_event = {}
+                    for item in self.select_list:
+                        if isinstance(item, str):
+                            if item in self.group_by:
+                                gb_idx = self.group_by.index(item)
+                                result_event[item] = key[gb_idx]
+                            elif grouped_events and item in grouped_events[0]:
+                                result_event[item] = grouped_events[0][item]
+                        elif isinstance(item, dict) and item.get('func') == func and item.get('field') == field:
+                            result_event[agg_col_name] = result_val
+                else:
+                    result_event = {agg_col_name: result_val}
+                    for idx, gb_field in enumerate(self.group_by):
+                        result_event[gb_field] = key[idx]
+
+                if self.next_op:
+                    self.next_op.process(result_event)
         except Exception as e:
             print(f"Aggregation error: {e}")
+
+
+class JoinOperator(Operator):
+    """INNER JOIN stream events with rows from a persistent SQLite table."""
+
+    def __init__(self, table_name, left_field, right_field, next_op=None, db_path='data/static_tables.db'):
+        self.table_name = table_name
+        self.left_field = left_field
+        self.right_field = right_field
+        self.next_op = next_op
+        self.db_path = db_path
+        self._conn = None
+
+    def _get_conn(self):
+        if self._conn is None:
+            os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+        return self._conn
+
+    def process(self, event):
+        if self.next_op is None:
+            return
+
+        if self.left_field not in event:
+            return
+
+        join_value = event[self.left_field]
+        conn = self._get_conn()
+
+        try:
+            query = f'SELECT * FROM "{self.table_name}" WHERE "{self.right_field}" = ?'
+            rows = conn.execute(query, (join_value,)).fetchall()
+        except Exception as e:
+            print(f"Join error on table '{self.table_name}': {e}")
+            return
+
+        # INNER JOIN behavior: emit only when at least one matching table row exists.
+        for row in rows:
+            joined_event = dict(event)
+            row_dict = dict(row)
+            for key, val in row_dict.items():
+                if key in joined_event:
+                    joined_event[f"table_{key}"] = val
+                else:
+                    joined_event[key] = val
+            self.next_op.process(joined_event)
 
 class SinkOperator(Operator):
     def __init__(self, target_table=None, target_stream=None, target_topic=None, callback=None):

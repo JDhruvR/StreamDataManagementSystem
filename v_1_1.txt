@@ -1,0 +1,245 @@
+STREAM DATA MANAGEMENT SYSTEM v1.1 - RUN GUIDE
+==============================================
+
+PURPOSE
+=======
+This document explains complete v1.1 usage:
+- Create/load schema
+- Create input stream
+- Deploy continuous SELECT queries
+- Use persistent tables (SQLite)
+- Run stream-to-table INNER JOIN
+
+WHAT IS NEW IN v1.1
+===================
+- Interactive CLI for runtime stream/query deployment
+- Persistent schema updates (saved to JSON)
+- Persistent tables with CRUD operations (SQLite)
+- INNER JOIN support (stream -> table)
+
+PREREQUISITES
+=============
+- Python dependencies installed (recommended env: dm)
+- Kafka 3.6.1 available under project folder kafka/
+- Java installed
+
+TERMINAL SETUP
+==============
+Use 4 terminals.
+
+Terminal 1: Kafka broker
+------------------------
+cd StreamDataManagementSystem/kafka
+bin/kafka-server-start.sh config/server.properties
+
+Terminal 2: Sensor producer
+---------------------------
+cd StreamDataManagementSystem
+python -m sensors.pollution_sensor
+
+Terminal 3: Interactive CLI
+---------------------------
+cd StreamDataManagementSystem
+python -m examples.cli
+
+Terminal 4: Kafka output consumer
+---------------------------------
+cd StreamDataManagementSystem/kafka
+bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic <topic_name>
+
+IMPORTANT
+=========
+- Always run sensor using module mode: python -m sensors.pollution_sensor
+- Output format now follows SQL-style projection
+	Example: SELECT sensor_id, AVG(value) -> {"sensor_id": "s1", "AVG(value)": 120.3}
+
+CLI COMMAND SUMMARY
+===================
+Schema and stream/query commands:
+- load [schema_path]
+- create
+- schemas
+- status
+- add_input
+- query
+- save
+
+Persistent table commands:
+- table_create
+- table_add_column
+- table_insert
+- table_update
+- table_delete
+- table_list
+- table_schema
+- table_select
+
+Utility commands:
+- wait
+- help
+- exit
+
+END-TO-END FLOW (FRESH START)
+=============================
+At CLI prompt (sdms>):
+
+1) Create schema
+----------------
+create
+schema_name> pollution2
+
+2) Create input stream (stream registration)
+--------------------------------------------
+add_input
+input_stream_name> pollution_stream
+topic [pollution_stream]>
+columns> timestamp:STRING,sensor_id:STRING,pollutant:STRING,value:FLOAT
+
+3) Deploy query
+---------------
+query
+query> SELECT sensor_id, AVG(value) FROM pollution_stream WHERE sensor_id = "s1"
+query_name> avg_pollution
+output_stream> pollution_out
+output_topic [pollution_out]>
+
+4) Verify and persist
+---------------------
+status
+save
+wait
+
+Expected output shape for this query:
+{"sensor_id": "s1", "AVG(value)": 123.45}
+
+Note:
+- Window is schema-level (default in new schema: 10 seconds).
+- Aggregation result appears after window emit.
+
+FLOW USING EXISTING SCHEMA JSON
+===============================
+At CLI prompt:
+
+1) load schemas/pollution2.json
+2) status
+3) wait
+
+Then consume topic shown in status.
+
+PERSISTENCE DETAILS
+===================
+- Active schema file path: schemas/<schema_name>.json
+- create/add_input/query updates are written to active schema file
+- save triggers explicit write immediately
+- Persistent table DB file: data/static_tables.db
+
+PERSISTENT TABLES
+=================
+Tables are useful as reference/dimension data (for JOIN).
+
+Example flow:
+
+1) table_create
+table_name> sensors
+columns> id:STRING,name:STRING
+
+2) table_insert
+table_name> sensors
+row_json> {"id": "s1", "name": "sensor_1"}
+
+3) table_insert
+table_name> sensors
+row_json> {"id": "s2", "name": "sensor_2"}
+
+4) table_list
+5) table_schema
+table_name> sensors
+
+6) table_select
+table_name> sensors
+limit [20]>
+
+7) table_update
+table_name> sensors
+set_json> {"name": "sensor_1A"}
+where_json> {"id": "s1"}
+
+8) table_delete
+table_name> sensors
+where_json> {"id": "s2"}
+
+JOIN SUPPORT (STREAM -> TABLE)
+==============================
+Supported join type:
+- INNER JOIN
+
+Supported pattern:
+- SELECT ... FROM <stream_name> INNER JOIN <table_name> ON <stream_field> = <table_field> [WHERE ...]
+
+Example:
+
+1) Ensure table exists
+table_create
+table_name> sensors
+columns> id:STRING,name:STRING
+
+table_insert
+table_name> sensors
+row_json> {"id": "s1", "name": "sensor_1"}
+
+2) Deploy join query
+query
+query> SELECT AVG(value), name FROM pollution_stream INNER JOIN sensors ON sensor_id = id
+query_name> joined_query
+output_stream> joined_out
+output_topic [joined_out]>
+
+3) Consume joined output
+cd StreamDataManagementSystem/kafka
+bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic joined_out --from-beginning
+
+Join notes:
+- If stream and table have same column name, table column is emitted as table_<column_name>
+- Join reads table data from data/static_tables.db
+
+QUERY EXAMPLES
+==============
+1) Average for a specific sensor
+SELECT AVG(value) FROM pollution_stream WHERE sensor_id = "s1"
+
+2) Sensor-wise average
+SELECT sensor_id, AVG(value) FROM pollution_stream WHERE value > 0
+
+3) Simple filtered projection
+SELECT sensor_id, value FROM pollution_stream WHERE value > 50
+
+4) Join with filter
+SELECT AVG(value), name FROM pollution_stream INNER JOIN sensors ON sensor_id = id
+
+TRIAL
+=====
+Currently most of the above are already inputted. To try it out keep the 4 terminals running and in the terminal running the cli.py:
+load <path_to_pollution2.json>
+
+COMMON ISSUES
+=============
+1) No output visible
+- Query may be waiting for window emit (default 10 seconds)
+- WHERE filter may be too strict
+- Confirm topic name from status
+
+2) Old output format/messages still visible
+- Consumer with --from-beginning shows historical messages
+- Use a new output topic for clean verification
+
+3) Sensor producer fails
+- Activate env and run module mode:
+	source /home/navaneeth/miniconda3/bin/activate dm
+	python -m sensors.pollution_sensor
+
+4) Kafka connection error
+- Start broker from kafka/ folder:
+	bin/kafka-server-start.sh config/server.properties
+
+END
+===

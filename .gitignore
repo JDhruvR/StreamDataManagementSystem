@@ -4,7 +4,7 @@ venv/
 ENV/
 
 # Kafka Directories and Archives
-kafka_*/
+kafka*/
 *.tgz
 *.tar.gz
 

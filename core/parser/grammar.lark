@@ -6,7 +6,8 @@ statement: create_table
 
 create_table: "CREATE" "TABLE" identifier "(" column_defs ")"
 create_stream: "CREATE" "STREAM" identifier "(" column_defs ")" "WITH" "(" stream_options ")"
-select_query: "SELECT" select_list "FROM" identifier (where_clause)?
+select_query: "SELECT" select_list "FROM" identifier (join_clause)? (where_clause)?
+join_clause: "INNER" "JOIN" identifier "ON" identifier "=" identifier
 
 column_defs: column_def ("," column_def)*
 column_def: identifier data_type
@@ -18,7 +19,8 @@ aggregate_expr: func_name "(" identifier ")"
 !func_name: "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 
 where_clause: "WHERE" condition
-condition: identifier operator literal
+condition: identifier operator condition_value
+condition_value: literal | string_literal
 !operator: ">" | "<" | "=" | ">=" | "<=" | "!="
 
 stream_options: stream_option ("," stream_option)*

@@ -57,11 +57,22 @@ class SQLTransformer(Transformer):
     def operator(self, items):
         return items[0].value
 
+    def condition_value(self, items):
+        return items[0]
+
     def condition(self, items):
         return {"field": items[0], "operator": items[1], "value": items[2]}
 
     def where_clause(self, items):
         return items[0]
+
+    def join_clause(self, items):
+        return {
+            "join_type": "INNER",
+            "table": items[0],
+            "left_field": items[1],
+            "right_field": items[2],
+        }
 
     def func_name(self, items):
         return items[0].value
@@ -84,10 +95,12 @@ class SQLTransformer(Transformer):
             "from": items[1]
         }
         
-        # Parse WHERE clause if present
+        # Parse JOIN/WHERE clauses if present
         if len(items) > 2:
             for item in items[2:]:
-                if isinstance(item, dict) and "field" in item and "operator" in item:
+                if isinstance(item, dict) and "join_type" in item:
+                    query["join"] = item
+                elif isinstance(item, dict) and "field" in item and "operator" in item:
                     query["where"] = item
 
         return query
