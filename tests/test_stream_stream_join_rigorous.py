@@ -1,4 +1,5 @@
 import pytest
+import threading
 
 from core.execution.operators import StreamStreamJoinOperator
 
@@ -121,3 +122,42 @@ def test_window_eviction_across_multiple_windows(window_seconds):
     join.process("r", {"id": "old"})
 
     assert collector.events == []
+
+
+def test_concurrent_processing_is_thread_safe():
+    collector = Collector()
+    join = StreamStreamJoinOperator(
+        left_stream="pollution_stream",
+        right_stream="weather_stream",
+        left_field="sensor_id",
+        right_field="sensor_id",
+        operator="=",
+        window_seconds=30,
+        next_op=collector,
+    )
+
+    errors = []
+
+    def produce_left():
+        try:
+            for i in range(200):
+                join.process("pollution_stream", {"sensor_id": f"s{i % 4}", "value": i})
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    def produce_right():
+        try:
+            for i in range(200):
+                join.process("weather_stream", {"sensor_id": f"s{i % 4}", "humidity": i})
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t1 = threading.Thread(target=produce_left)
+    t2 = threading.Thread(target=produce_right)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert errors == []
+    assert len(collector.events) > 0

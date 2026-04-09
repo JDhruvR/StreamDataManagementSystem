@@ -89,6 +89,12 @@ def _infer_output_schema(
     return output_schema
 
 
+def _normalize_command_token(token: str) -> str:
+    cleaned = token.strip().lower().replace("-", "_")
+    cleaned = re.sub(r"[^a-z0-9_]", "", cleaned)
+    return cleaned
+
+
 class StreamingCLI:
     def __init__(self, schema_path: Optional[str], broker: str):
         self.schema_path = schema_path
@@ -512,8 +518,26 @@ class StreamingCLI:
                 break
 
             cmd_parts = raw_cmd.split(maxsplit=1)
-            cmd = cmd_parts[0].lower() if cmd_parts else ""
+            cmd = _normalize_command_token(cmd_parts[0]) if cmd_parts else ""
             arg = cmd_parts[1] if len(cmd_parts) > 1 else ""
+
+            if cmd == "table" and arg:
+                sub = _normalize_command_token(arg.split(maxsplit=1)[0])
+                if sub:
+                    cmd = f"table_{sub}"
+
+            aliases = {
+                "quit": "exit",
+                "tablecreate": "table_create",
+                "tableaddcolumn": "table_add_column",
+                "tableinsert": "table_insert",
+                "tableupdate": "table_update",
+                "tabledelete": "table_delete",
+                "tablelist": "table_list",
+                "tableschema": "table_schema",
+                "tableselect": "table_select",
+            }
+            cmd = aliases.get(cmd, cmd)
 
             if cmd in {"exit", "quit"}:
                 print("Exiting CLI.")

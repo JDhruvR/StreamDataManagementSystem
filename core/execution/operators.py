@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import statistics
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections import deque
@@ -245,22 +246,26 @@ class StreamStreamJoinOperator:
 
         self.left_buffer = deque()
         self.right_buffer = deque()
+        self._lock = threading.Lock()
 
     def process(self, stream_name, event):
         if self.next_op is None:
             return
 
-        now = self.time_fn()
-        self._evict_old(now)
+        outputs = []
+        with self._lock:
+            now = self.time_fn()
+            self._evict_old(now)
 
-        if stream_name == self.left_stream:
-            self.left_buffer.append((now, event))
-            self._join_against_buffer(event, self.right_buffer, left_event=True)
-            return
+            if stream_name == self.left_stream:
+                self.left_buffer.append((now, event))
+                outputs = self._join_against_buffer(event, self.right_buffer, left_event=True)
+            elif stream_name == self.right_stream:
+                self.right_buffer.append((now, event))
+                outputs = self._join_against_buffer(event, self.left_buffer, left_event=False)
 
-        if stream_name == self.right_stream:
-            self.right_buffer.append((now, event))
-            self._join_against_buffer(event, self.left_buffer, left_event=False)
+        for merged in outputs:
+            self.next_op.process(merged)
 
     def _evict_old(self, now):
         cutoff = now - self.window_seconds
@@ -272,11 +277,12 @@ class StreamStreamJoinOperator:
     def _join_against_buffer(self, incoming_event, other_buffer, left_event):
         incoming_key = self.left_field if left_event else self.right_field
         other_key = self.right_field if left_event else self.left_field
+        results = []
 
         if incoming_key not in incoming_event:
-            return
+            return results
 
-        for _, other_event in other_buffer:
+        for _, other_event in list(other_buffer):
             if other_key not in other_event:
                 continue
 
@@ -287,7 +293,9 @@ class StreamStreamJoinOperator:
                 merged = self._merge_events(incoming_event, other_event)
             else:
                 merged = self._merge_events(other_event, incoming_event)
-            self.next_op.process(merged)
+            results.append(merged)
+
+        return results
 
     def _matches(self, left_value, right_value):
         if self.operator == "=":
