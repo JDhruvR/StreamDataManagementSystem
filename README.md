@@ -30,8 +30,14 @@ Terminal C:
 python -m sensors.pollution_sensor
 ```
 
-### 3) Start CLI
+### 2b) (For stream-stream join demo) Start weather producer
 Terminal D:
+```bash
+python -m sensors.weather_sensor
+```
+
+### 3) Start CLI
+Terminal E:
 ```bash
 python -m examples.cli
 ```
@@ -58,6 +64,21 @@ You should now see processed output events.
 - Supported joins:
   - stream -> stream INNER JOIN
   - stream -> SQLite table INNER JOIN
+
+## Manual Stream-Stream Join Demo
+
+1. Start `python -m sensors.pollution_sensor` and `python -m sensors.weather_sensor` in separate terminals.
+2. Start CLI: `python -m examples.cli`
+3. In CLI:
+```text
+load schemas/stream_join_demo.json
+status
+```
+4. Consume join output:
+```bash
+cd kafka_2.13-3.6.1
+bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic joined_out
+```
 
 ## Run tests
 
