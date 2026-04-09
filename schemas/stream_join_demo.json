@@ -1,0 +1,49 @@
+{
+  "schema_name": "stream_join_demo",
+  "window_size": 10,
+  "window_unit": "seconds",
+  "velocity": {
+    "type": "count",
+    "value": 1
+  },
+  "input_streams": [
+    {
+      "name": "pollution_stream",
+      "topic": "pollution_stream",
+      "schema": {
+        "timestamp": "STRING",
+        "sensor_id": "STRING",
+        "pollutant": "STRING",
+        "value": "FLOAT"
+      }
+    },
+    {
+      "name": "weather_stream",
+      "topic": "weather_stream",
+      "schema": {
+        "sensor_id": "STRING",
+        "humidity": "FLOAT",
+        "zone": "STRING"
+      }
+    }
+  ],
+  "continuous_queries": [
+    {
+      "name": "pollution_weather_join",
+      "input_stream": "pollution_stream",
+      "output_stream": "joined_out",
+      "query": "SELECT sensor_id, value, humidity FROM pollution_stream INNER JOIN weather_stream ON sensor_id = sensor_id WHERE value > 50"
+    }
+  ],
+  "output_streams": [
+    {
+      "name": "joined_out",
+      "topic": "joined_out",
+      "schema": {
+        "sensor_id": "STRING",
+        "value": "FLOAT",
+        "humidity": "FLOAT"
+      }
+    }
+  ]
+}
