@@ -16,11 +16,15 @@ WHAT IS NEW IN v1.1
 - Persistent schema updates (saved to JSON)
 - Persistent tables with CRUD operations (SQLite)
 - INNER JOIN support (stream -> table)
+- Query projection fixes for non-aggregate SELECT
+- Schema reload/replace support for same schema name
+- Stream-to-stream INNER JOIN support with schema window buffering
+- Time-based velocity triggering implemented in execution window operator
 
 PREREQUISITES
 =============
 - Python dependencies installed (recommended env: dm)
-- Kafka 3.6.1 available under project folder kafka/
+- Kafka 3.6.1 available under project folder kafka_2.13-3.6.1/
 - Java installed
 
 TERMINAL SETUP
@@ -29,7 +33,7 @@ Use 4 terminals.
 
 Terminal 1: Kafka broker
 ------------------------
-cd StreamDataManagementSystem/kafka
+cd StreamDataManagementSystem/kafka_2.13-3.6.1
 bin/kafka-server-start.sh config/server.properties
 
 Terminal 2: Sensor producer
@@ -44,7 +48,7 @@ python -m examples.cli
 
 Terminal 4: Kafka output consumer
 ---------------------------------
-cd StreamDataManagementSystem/kafka
+cd StreamDataManagementSystem/kafka_2.13-3.6.1
 bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic <topic_name>
 
 IMPORTANT
@@ -195,12 +199,41 @@ output_stream> joined_out
 output_topic [joined_out]>
 
 3) Consume joined output
-cd StreamDataManagementSystem/kafka
+cd StreamDataManagementSystem/kafka_2.13-3.6.1
 bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic joined_out --from-beginning
 
 Join notes:
 - If stream and table have same column name, table column is emitted as table_<column_name>
 - Join reads table data from data/static_tables.db
+
+JOIN SUPPORT (STREAM -> STREAM)
+===============================
+Supported join type:
+- INNER JOIN
+
+Supported pattern:
+- SELECT ... FROM <left_stream> INNER JOIN <right_stream> ON <left_field> = <right_field> [WHERE ...]
+
+Behavior:
+- Join target is resolved as stream-stream when target name exists in schema input_streams.
+- Engine buffers both streams for schema window duration and joins on new arrivals.
+- Right-side field collisions are emitted as right_<column_name>.
+- Queries that need right-side duplicate fields should reference right_<column_name> in SELECT.
+
+Example:
+SELECT sensor_id, value, humidity FROM pollution_stream INNER JOIN weather_stream ON sensor_id = sensor_id
+
+VELOCITY EXECUTION
+==================
+- count mode: emit after N events into window operator.
+- time mode: emit when configured time interval has elapsed.
+- window rollover still emits buffered aggregate-ready events for tumbling windows.
+
+QUEUE DURABILITY
+================
+- Message queue is ephemeral-only in current runtime.
+- Persistence mode flag has been removed from CLI/config usage.
+- Retention policy remains `log.retention.ms=1`.
 
 QUERY EXAMPLES
 ==============
@@ -218,8 +251,11 @@ SELECT AVG(value), name FROM pollution_stream INNER JOIN sensors ON sensor_id = 
 
 TRIAL
 =====
-Currently most of the above are already inputted. To try it out keep the 4 terminals running and in the terminal running the cli.py:
-load <path_to_pollution2.json>
+Quick current trial flow:
+1) Keep the 4 terminals running.
+2) In CLI run: load schemas/pollution2.json
+3) Run status to verify deployed streams/queries.
+4) Consume pollution_out topic in terminal 4.
 
 COMMON ISSUES
 =============
@@ -238,7 +274,7 @@ COMMON ISSUES
 	python -m sensors.pollution_sensor
 
 4) Kafka connection error
-- Start broker from kafka/ folder:
+- Start broker from kafka_2.13-3.6.1/ folder:
 	bin/kafka-server-start.sh config/server.properties
 
 END

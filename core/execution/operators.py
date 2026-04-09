@@ -1,9 +1,9 @@
-import time
 import os
 import sqlite3
+import statistics
+import time
 from abc import ABC, abstractmethod
 from collections import deque
-import statistics
 
 class Operator(ABC):
     @abstractmethod
@@ -37,46 +37,87 @@ class FilterOperator(Operator):
             self.next_op.process(event)
 
 class WindowOperator(Operator):
-    def __init__(self, window_config, next_op=None):
+    def __init__(self, window_config, velocity_config=None, next_op=None, time_fn=None):
         self.window_config = window_config
+        self.velocity_config = velocity_config or {"type": "count", "value": 1}
         self.next_op = next_op
-        self.buffer = []
-        self.window_start_time = time.time()
-        
-        # Calculate size in seconds
-        size = float(window_config['size'])
-        unit = window_config['unit']
-        if unit == 'MINUTES': size *= 60
-        elif unit == 'HOURS': size *= 3600
-        
+        self.time_fn = time_fn or time.time
+
+        size = float(window_config["size"])
+        unit = str(window_config["unit"]).upper()
+        if unit == "MINUTES":
+            size *= 60
+        elif unit == "HOURS":
+            size *= 3600
         self.window_size_seconds = size
-        self.window_type = window_config['type'] # TUMBLING or SLIDING
+        self.window_type = str(window_config.get("type", "TUMBLING")).upper()
+
+        velocity_type = str(self.velocity_config.get("type", "count")).upper()
+        velocity_value = float(self.velocity_config.get("value", 1))
+        if velocity_value <= 0:
+            raise ValueError("velocity value must be positive")
+        self.velocity_type = velocity_type
+        self.velocity_value = velocity_value
+
+        now = self.time_fn()
+        self.window_start_time = now
+        self.last_emit_time = now
+        self.events_since_emit = 0
+        self.buffer = deque()
 
     def process(self, event):
-        current_time = time.time()
-        self.buffer.append(event)
-        
-        if self.window_type == 'TUMBLING':
-            if current_time - self.window_start_time >= self.window_size_seconds:
-                # Window is full, emit it
-                self.emit_window()
-                # Reset window
-                self.buffer = []
-                self.window_start_time = current_time
-                
-        elif self.window_type == 'SLIDING':
-            # Evict old events
-            self.buffer = [e for e in self.buffer if current_time - self._parse_event_time(e) <= self.window_size_seconds]
+        now = self.time_fn()
+
+        if self.window_type == "TUMBLING":
+            self._roll_tumbling_window(now)
+            self.buffer.append((now, event))
+        elif self.window_type == "SLIDING":
+            self.buffer.append((now, event))
+            self._evict_old_events(now)
+        else:
+            raise ValueError(f"Unsupported window type: {self.window_type}")
+
+        self.events_since_emit += 1
+        if self._should_emit(now):
             self.emit_window()
-            
-    def _parse_event_time(self, event):
-        # Simplification: return current time to mimic processing-time characteristic
-        # For event-time, would parse event['timestamp']
-        return time.time()
+            self._reset_velocity_state(now)
+
+    def _roll_tumbling_window(self, now):
+        elapsed = now - self.window_start_time
+        if elapsed < self.window_size_seconds:
+            return
+
+        if self.buffer:
+            self.emit_window()
+            self._reset_velocity_state(now)
+
+        windows_advanced = int(elapsed // self.window_size_seconds)
+        self.window_start_time += windows_advanced * self.window_size_seconds
+        self.buffer.clear()
+
+    def _evict_old_events(self, now):
+        lower_bound = now - self.window_size_seconds
+        while self.buffer and self.buffer[0][0] < lower_bound:
+            self.buffer.popleft()
+
+    def _should_emit(self, now):
+        if self.velocity_type == "COUNT":
+            return self.events_since_emit >= int(self.velocity_value)
+
+        if self.velocity_type == "TIME":
+            return now - self.last_emit_time >= self.velocity_value
+
+        raise ValueError(f"Unsupported velocity type: {self.velocity_type}")
+
+    def _reset_velocity_state(self, now):
+        self.events_since_emit = 0
+        self.last_emit_time = now
 
     def emit_window(self):
-        if self.next_op and self.buffer:
-            self.next_op.process(list(self.buffer))
+        if not self.next_op or not self.buffer:
+            return
+        events = [event for _, event in self.buffer]
+        self.next_op.process(events)
 
 
 class ProjectionOperator(Operator):
@@ -177,6 +218,93 @@ class AggregateOperator(Operator):
                     self.next_op.process(result_event)
         except Exception as e:
             print(f"Aggregation error: {e}")
+
+
+class StreamStreamJoinOperator:
+    """INNER JOIN between two streams using processing-time window buffers."""
+
+    def __init__(
+        self,
+        left_stream,
+        right_stream,
+        left_field,
+        right_field,
+        operator="=",
+        window_seconds=10,
+        next_op=None,
+        time_fn=None,
+    ):
+        self.left_stream = left_stream
+        self.right_stream = right_stream
+        self.left_field = left_field
+        self.right_field = right_field
+        self.operator = operator
+        self.window_seconds = float(window_seconds)
+        self.next_op = next_op
+        self.time_fn = time_fn or time.time
+
+        self.left_buffer = deque()
+        self.right_buffer = deque()
+
+    def process(self, stream_name, event):
+        if self.next_op is None:
+            return
+
+        now = self.time_fn()
+        self._evict_old(now)
+
+        if stream_name == self.left_stream:
+            self.left_buffer.append((now, event))
+            self._join_against_buffer(event, self.right_buffer, left_event=True)
+            return
+
+        if stream_name == self.right_stream:
+            self.right_buffer.append((now, event))
+            self._join_against_buffer(event, self.left_buffer, left_event=False)
+
+    def _evict_old(self, now):
+        cutoff = now - self.window_seconds
+        while self.left_buffer and self.left_buffer[0][0] < cutoff:
+            self.left_buffer.popleft()
+        while self.right_buffer and self.right_buffer[0][0] < cutoff:
+            self.right_buffer.popleft()
+
+    def _join_against_buffer(self, incoming_event, other_buffer, left_event):
+        incoming_key = self.left_field if left_event else self.right_field
+        other_key = self.right_field if left_event else self.left_field
+
+        if incoming_key not in incoming_event:
+            return
+
+        for _, other_event in other_buffer:
+            if other_key not in other_event:
+                continue
+
+            if not self._matches(incoming_event[incoming_key], other_event[other_key]):
+                continue
+
+            if left_event:
+                merged = self._merge_events(incoming_event, other_event)
+            else:
+                merged = self._merge_events(other_event, incoming_event)
+            self.next_op.process(merged)
+
+    def _matches(self, left_value, right_value):
+        if self.operator == "=":
+            return left_value == right_value
+        if self.operator == "!=":
+            return left_value != right_value
+        raise ValueError(f"Unsupported join operator: {self.operator}")
+
+    @staticmethod
+    def _merge_events(left_event, right_event):
+        merged = dict(left_event)
+        for key, value in right_event.items():
+            if key in merged:
+                merged[f"right_{key}"] = value
+            else:
+                merged[key] = value
+        return merged
 
 
 class JoinOperator(Operator):

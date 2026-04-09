@@ -1,4 +1,4 @@
-# StreamDataManagementSystem v1.0 - Schema-Based Streaming Engine
+# StreamDataManagementSystem v1.1+ - Schema-Based Streaming Engine
 
 A complete walkthrough of the schema-based architecture, how continuous queries work, and how to extend the system.
 
@@ -6,10 +6,10 @@ A complete walkthrough of the schema-based architecture, how continuous queries 
 
 ## How the System Works (End-to-End)
 
-The v1.0 architecture operates on a **schema-based model** where all streaming deployments are defined in JSON configuration files. Here's the complete flow:
+The current architecture operates on a **schema-based model** where all streaming deployments are defined in JSON configuration files. Here's the complete flow:
 
 ### Stage 1: Schema Configuration (The Blueprint)
-* **File:** `schemas/pollution_schema.json` (or any custom schema file)
+* **File:** `schemas/pollution_schema.json` / `schemas/pollution2.json` (or any custom schema file)
 * **What happens:** 
   - You define a schema JSON file specifying:
     - **Input streams**: Where data comes from (Kafka topics)
@@ -60,12 +60,15 @@ The v1.0 architecture operates on a **schema-based model** where all streaming d
 * **Files:** `core/execution/engine.py` & `core/execution/operators.py`
 * **What happens:**
   - For each continuous query in the schema, engine builds an operator chain:
-    1. **FilterOperator**: Checks WHERE conditions (e.g., `value > 50`)
-    2. **WindowOperator**: Buffers events for the schema's window duration
-    3. **AggregateOperator**: Applies aggregate functions (AVG, SUM, COUNT, etc.)
-    4. **SinkOperator**: Writes results to output stream/table
+    1. **JoinOperator** (optional):
+       - stream -> stream INNER JOIN (window-aware)
+       - stream -> SQLite reference table INNER JOIN
+    2. **FilterOperator** (optional): Checks WHERE conditions (e.g., `value > 50`)
+    3. **WindowOperator** + **AggregateOperator** (for aggregate queries)
+    4. **ProjectionOperator** (for non-aggregate SELECT field lists)
+    5. **SinkOperator**: Writes results to output stream/table
   - All queries in the schema share the same window size (defined globally)
-  - Example pipeline for "SELECT sensor_id, AVG(value) FROM stream WHERE value > 50":
+  - Example pipeline for `SELECT sensor_id, AVG(value) FROM stream WHERE value > 50`:
     ```
     Event Input → FilterOperator (value > 50?) → WindowOperator (10s buffer)
     → AggregateOperator (AVG) → SinkOperator (output stream)
@@ -176,21 +179,40 @@ If you want to add a new clause (e.g., `HAVING`, `ORDER BY`):
        pipeline = HavingOperator(query_plan['having'], next_op=pipeline)
    ```
 
-### D. Support Multiple Input Streams per Query
+### D. Use JOIN with Reference Table
 
-**Already supported!** Create a query that reads from any stream in the schema:
+**Supported now:** stream -> table `INNER JOIN` in continuous queries:
 ```json
 {
-  "name": "multi_stream_alert",
-  "input_stream": "pollution_stream",  // Can be any input stream
+  "name": "joined_alert",
+  "input_stream": "pollution_stream",
   "output_stream": "alerts",
-  "query": "SELECT * FROM pollution_stream WHERE value > 100"
+  "query": "SELECT AVG(value), name FROM pollution_stream INNER JOIN sensors ON sensor_id = id"
 }
 ```
 
-Schema ensures stream exists before deploying.
+Join execution reads rows from `data/static_tables.db`.
 
-### E. Swap Kafka for Alternative Message Queue
+### E. Use JOIN Between Two Streams
+
+**Supported now:** stream -> stream `INNER JOIN` in continuous queries.
+If JOIN target matches an input stream name, engine creates a stream-stream join pipeline.
+
+```json
+{
+  "name": "pollution_weather",
+  "input_stream": "pollution_stream",
+  "output_stream": "joined_out",
+  "query": "SELECT sensor_id, value, humidity FROM pollution_stream INNER JOIN weather_stream ON sensor_id = sensor_id"
+}
+```
+
+Behavior notes:
+- Join window uses schema `window_size/window_unit` (processing time).
+- Events are buffered per stream inside window; matches emit joined events.
+- On field name collision, right-stream fields are prefixed as `right_<field>`.
+
+### F. Swap Kafka for Alternative Message Queue
 
 1. Create new client wrapper in `streaming/alternative_client.py`
 2. Update `run_system.py` to use new client instead of `StreamConsumer`
@@ -200,14 +222,10 @@ Schema ensures stream exists before deploying.
 
 ## Configuration & Customization
 
-### Kafka Mode (In-Memory vs. Persistent)
+### Kafka Mode
 
-Default is **in-memory (ephemeral)**. To enable persistence:
-```python
-from streaming.kafka_config import KafkaConfig, set_default_config
-
-set_default_config(persistence=True)  # Now messages persist to disk
-```
+Queue mode is **in-memory/ephemeral only** in current design.
+Message retention is configured to `log.retention.ms=1`.
 
 ### Window Configuration
 
@@ -225,27 +243,26 @@ Global per schema - all queries share the same:
 
 ### Velocity Modes
 
-- **Count-based**: Trigger after N events (currently implemented)
-- **Time-based**: Trigger after N seconds (extensible, not yet implemented)
+- **Count-based**: Trigger after N events (implemented)
+- **Time-based**: Trigger after N seconds (implemented)
 
 ---
 
 ## Limitations & Future Enhancements
 
-### Current Limitations (v1.0)
-- No stream joins (single input per query)
+### Current Limitations
 - GROUP BY partially supported (simplified)
 - SLIDING windows simplified (TUMBLING default)
 - No query state persistence across restarts
-- Single deployment per schema (no query updates without restart)
+- No automatic hot-reload pipeline orchestration in `run_system.py` (CLI supports interactive add/query/save)
 
 ### Future Enhancements
-- Stream join support
 - Hot-reload queries without restart
 - Advanced state management
 - Performance optimization for high-throughput
 - Monitoring and metrics collection
 - Schema versioning and migration
+- Stronger schema-time validation for JOIN targets and field compatibility
 
 ---
 

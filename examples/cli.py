@@ -22,10 +22,58 @@ from streaming.kafka_config import set_default_config, get_default_config
 from core.storage.reference_tables import ReferenceTableStore
 
 
-def _infer_output_schema(select_expr: Any, input_schema: Dict[str, str]) -> Dict[str, str]:
-    """Build a simple output schema from select list and input schema."""
+def _sqlite_type_to_sdms(sqlite_type: str) -> str:
+    t = sqlite_type.upper()
+    if "INT" in t:
+        return "INT"
+    if "REAL" in t or "FLOA" in t or "DOUB" in t:
+        return "FLOAT"
+    if "BOOL" in t:
+        return "BOOLEAN"
+    if "TIME" in t or "DATE" in t:
+        return "TIMESTAMP"
+    return "STRING"
+
+
+def _infer_output_schema(
+    query_plan: Dict[str, Any],
+    input_streams: Dict[str, Dict[str, Any]],
+    table_store: ReferenceTableStore,
+) -> Dict[str, str]:
+    """Infer output stream schema for SELECT, including JOIN scenarios."""
+    left_stream = query_plan["from"]
+    left_schema = dict(input_streams[left_stream]["schema"])
+    merged_schema = dict(left_schema)
+
+    join_cfg = query_plan.get("join")
+    if isinstance(join_cfg, dict):
+        join_source = join_cfg["table"]
+        if join_source in input_streams:
+            right_schema = dict(input_streams[join_source]["schema"])
+            for key, value in right_schema.items():
+                if key in merged_schema:
+                    merged_schema[f"right_{key}"] = value
+                else:
+                    merged_schema[key] = value
+        else:
+            try:
+                table_columns = table_store.table_schema(join_source)
+            except Exception:
+                table_columns = []
+
+            for col in table_columns:
+                col_name = col.get("name")
+                if not col_name:
+                    continue
+                sdms_type = _sqlite_type_to_sdms(str(col.get("type", "TEXT")))
+                if col_name in merged_schema:
+                    merged_schema[f"table_{col_name}"] = sdms_type
+                else:
+                    merged_schema[col_name] = sdms_type
+
+    select_expr = query_plan.get("select")
     if select_expr == "*":
-        return dict(input_schema)
+        return merged_schema
 
     output_schema: Dict[str, str] = {}
     if not isinstance(select_expr, list):
@@ -33,20 +81,16 @@ def _infer_output_schema(select_expr: Any, input_schema: Dict[str, str]) -> Dict
 
     for item in select_expr:
         if isinstance(item, str):
-            output_schema[item] = input_schema.get(item, "STRING")
+            output_schema[item] = merged_schema.get(item, "STRING")
         elif isinstance(item, dict) and "func" in item and "field" in item:
             alias = f"{item['func']}({item['field']})"
-            # Aggregates are usually numeric except COUNT.
-            if item["func"] == "COUNT":
-                output_schema[alias] = "INT"
-            else:
-                output_schema[alias] = "FLOAT"
+            output_schema[alias] = "INT" if item["func"] == "COUNT" else "FLOAT"
 
     return output_schema
 
 
 class StreamingCLI:
-    def __init__(self, schema_path: Optional[str], broker: str, persistent: bool):
+    def __init__(self, schema_path: Optional[str], broker: str):
         self.schema_path = schema_path
         self.registry = get_global_registry()
         self.schema_manager = SchemaManager()
@@ -55,7 +99,7 @@ class StreamingCLI:
         self.active_schema_path: Optional[str] = None
         self.engine = None
 
-        set_default_config(broker=broker, persistence=persistent)
+        set_default_config(broker=broker)
         self.config = get_default_config()
 
         self.consumer_threads: List[threading.Thread] = []
@@ -274,8 +318,11 @@ class StreamingCLI:
             topic_default = output_stream
             output_topic = input(f"output_topic [{topic_default}]> ").strip() or topic_default
 
-            input_schema = self.engine.get_input_streams()[input_stream]["schema"]
-            inferred_schema = _infer_output_schema(query_plan.get("select"), input_schema)
+            inferred_schema = _infer_output_schema(
+                query_plan,
+                self.engine.get_input_streams(),
+                self.table_store,
+            )
             if not inferred_schema:
                 inferred_schema = {"value": "STRING"}
 
@@ -582,11 +629,6 @@ def main() -> None:
         default="localhost:9092",
         help="Kafka broker address",
     )
-    parser.add_argument(
-        "--persistent",
-        action="store_true",
-        help="Enable Kafka persistence mode",
-    )
 
     args = parser.parse_args()
 
@@ -594,7 +636,6 @@ def main() -> None:
         cli = StreamingCLI(
             schema_path=args.schema,
             broker=args.broker,
-            persistent=args.persistent,
         )
     except Exception as exc:
         print(f"Startup failed: {exc}")

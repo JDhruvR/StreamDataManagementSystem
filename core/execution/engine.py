@@ -6,9 +6,16 @@ No ad-hoc queries. Window size and velocity are fixed per schema.
 """
 
 from core.parser.sql_parser import parse_sql
-from core.execution.operators import FilterOperator, WindowOperator, AggregateOperator, SinkOperator, JoinOperator, ProjectionOperator
-from core.storage.table import storage
-from typing import Dict, List, Any, Optional, Callable
+from core.execution.operators import (
+    AggregateOperator,
+    FilterOperator,
+    JoinOperator,
+    ProjectionOperator,
+    SinkOperator,
+    StreamStreamJoinOperator,
+    WindowOperator,
+)
+from typing import Any, Dict, List, Optional
 
 
 class ExecutionEngine:
@@ -114,21 +121,32 @@ class ExecutionEngine:
             raise ValueError(f"Failed to parse query '{query_name}': {e}")
         
         # Build operator pipeline with schema-level window/velocity config
-        pipeline = self._build_pipeline(query_plan, output_stream_name)
+        deployment = self._build_pipeline(query_plan, output_stream_name)
         
         # Store query metadata
         self.queries.append({
             'name': query_name,
             'input_stream': input_stream_name,
+            'input_streams': deployment['input_streams'],
             'output_stream': output_stream_name,
-            'pipeline': pipeline,
+            'pipeline': deployment['pipeline'],
+            'pipeline_type': deployment['pipeline_type'],
             'query_plan': query_plan
         })
         
         print(f"✓ Continuous query deployed: {query_name}")
         print(f"   {input_stream_name} -> {output_stream_name}")
     
-    def _build_pipeline(self, query_plan: Dict[str, Any], output_stream_name: str) -> Any:
+    def _window_size_seconds(self) -> float:
+        size = float(self.window_config['window_size'])
+        unit = str(self.window_config['window_unit']).upper()
+        if unit == 'MINUTES':
+            return size * 60
+        if unit == 'HOURS':
+            return size * 3600
+        return size
+
+    def _build_pipeline(self, query_plan: Dict[str, Any], output_stream_name: str) -> Dict[str, Any]:
         """
         Build operator pipeline from query plan.
         
@@ -170,7 +188,11 @@ class ExecutionEngine:
                 'size': self.window_config['window_size'],
                 'unit': self.window_config['window_unit']
             }
-            pipeline = WindowOperator(window_config, next_op=pipeline)
+            pipeline = WindowOperator(
+                window_config,
+                velocity_config=self.window_config['velocity'],
+                next_op=pipeline,
+            )
         elif select_list != '*':
             # Non-aggregate SELECT should project selected columns, not whole events.
             pipeline = ProjectionOperator(select_list, next_op=pipeline)
@@ -179,22 +201,44 @@ class ExecutionEngine:
         if 'where' in query_plan:
             pipeline = FilterOperator(query_plan['where'], next_op=pipeline)
 
-        # Join operator (currently supports stream -> table INNER JOIN)
+        input_streams = {query_plan['from']}
+        pipeline_type = 'single_stream'
+
+        # Join operator
         if 'join' in query_plan:
             join_cfg = query_plan['join']
             join_type = join_cfg.get('join_type', 'INNER')
             if join_type != 'INNER':
                 raise ValueError(f"Unsupported join type: {join_type}")
 
-            pipeline = JoinOperator(
-                table_name=join_cfg['table'],
-                left_field=join_cfg['left_field'],
-                right_field=join_cfg['right_field'],
-                operator=join_cfg.get('operator', '='),
-                next_op=pipeline,
-            )
-        
-        return pipeline
+            join_source = join_cfg['table']
+            if join_source in self.input_streams:
+                pipeline = StreamStreamJoinOperator(
+                    left_stream=query_plan['from'],
+                    right_stream=join_source,
+                    left_field=join_cfg['left_field'],
+                    right_field=join_cfg['right_field'],
+                    operator=join_cfg.get('operator', '='),
+                    window_seconds=self._window_size_seconds(),
+                    next_op=pipeline,
+                )
+                input_streams.add(join_source)
+                pipeline_type = 'stream_stream_join'
+            else:
+                pipeline = JoinOperator(
+                    table_name=join_source,
+                    left_field=join_cfg['left_field'],
+                    right_field=join_cfg['right_field'],
+                    operator=join_cfg.get('operator', '='),
+                    next_op=pipeline,
+                )
+                pipeline_type = 'stream_table_join'
+
+        return {
+            'pipeline': pipeline,
+            'pipeline_type': pipeline_type,
+            'input_streams': input_streams,
+        }
     
     def process_event(self, stream_name: str, event: Dict[str, Any]) -> None:
         """
@@ -214,7 +258,12 @@ class ExecutionEngine:
         
         # Route to all queries listening on this stream
         for query in self.queries:
-            if query['input_stream'] == stream_name:
+            if stream_name not in query['input_streams']:
+                continue
+
+            if query['pipeline_type'] == 'stream_stream_join':
+                query['pipeline'].process(stream_name, event)
+            else:
                 query['pipeline'].process(event)
     
     def get_input_streams(self) -> Dict[str, Dict[str, Any]]:
@@ -238,4 +287,3 @@ class ExecutionEngine:
     def get_window_config(self) -> Dict[str, Any]:
         """Get window configuration."""
         return self.window_config
-
