@@ -6,7 +6,7 @@ No ad-hoc queries. Window size and velocity are fixed per schema.
 """
 
 from core.parser.sql_parser import parse_sql
-from core.execution.operators import FilterOperator, WindowOperator, AggregateOperator, SinkOperator, JoinOperator
+from core.execution.operators import FilterOperator, WindowOperator, AggregateOperator, SinkOperator, JoinOperator, ProjectionOperator
 from core.storage.table import storage
 from typing import Dict, List, Any, Optional, Callable
 
@@ -145,31 +145,35 @@ class ExecutionEngine:
         
         # Aggregate operator (if needed)
         select_list = query_plan.get('select', [])
-        agg_config = None
+        agg_configs = []
         group_by = []
         
         if isinstance(select_list, list):
             for item in select_list:
                 if isinstance(item, dict) and 'func' in item:
-                    agg_config = item
+                    agg_configs.append(item)
                 else:
                     group_by.append(item)
         
-        if agg_config:
+        has_aggregate = len(agg_configs) > 0
+
+        if has_aggregate:
             pipeline = AggregateOperator(
-                agg_config,
+                agg_configs,
                 group_by_fields=group_by,
                 next_op=pipeline,
                 select_list=select_list,
             )
-        
-        # Window operator (using schema-level config, NOT query-level)
-        window_config = {
-            'type': 'TUMBLING',  # Default to tumbling
-            'size': self.window_config['window_size'],
-            'unit': self.window_config['window_unit']
-        }
-        pipeline = WindowOperator(window_config, next_op=pipeline)
+            # Window operator (using schema-level config, NOT query-level)
+            window_config = {
+                'type': 'TUMBLING',  # Default to tumbling
+                'size': self.window_config['window_size'],
+                'unit': self.window_config['window_unit']
+            }
+            pipeline = WindowOperator(window_config, next_op=pipeline)
+        elif select_list != '*':
+            # Non-aggregate SELECT should project selected columns, not whole events.
+            pipeline = ProjectionOperator(select_list, next_op=pipeline)
         
         # Filter operator (if WHERE clause exists)
         if 'where' in query_plan:
@@ -186,6 +190,7 @@ class ExecutionEngine:
                 table_name=join_cfg['table'],
                 left_field=join_cfg['left_field'],
                 right_field=join_cfg['right_field'],
+                operator=join_cfg.get('operator', '='),
                 next_op=pipeline,
             )
         

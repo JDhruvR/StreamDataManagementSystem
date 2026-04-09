@@ -70,14 +70,12 @@ class StreamingCLI:
         schema = self.schema_manager.load_from_file(schema_path)
         schema_name = schema["schema_name"]
 
-        try:
+        if schema_name in self.registry.schemas:
+            engine = self.registry.replace_schema(schema)
+            print(f"Schema '{schema_name}' reloaded and replaced with the latest definition.")
+        else:
             engine = self.registry.register_schema(schema)
             print(f"Schema '{schema_name}' loaded and registered.")
-        except ValueError as exc:
-            if "already registered" not in str(exc):
-                raise
-            engine = self.registry.get_engine(schema_name)
-            print(f"Schema '{schema_name}' is already registered. Switched to it.")
 
         self.schema = schema
         self.schema_name = schema_name

@@ -54,6 +54,30 @@ class SchemaRegistry:
         
         print(f"✓ Schema registered: {schema_name}")
         return engine
+
+    def replace_schema(self, schema_dict: Dict[str, Any]) -> ExecutionEngine:
+        """
+        Replace an existing schema with the same name, or register it if new.
+
+        Only the matching schema entry is updated. Other schemas remain unchanged.
+        """
+        schema_name = schema_dict.get('schema_name')
+
+        if not schema_name:
+            raise ValueError("Schema must have 'schema_name' field")
+
+        try:
+            engine = ExecutionEngine(schema_dict)
+        except Exception as e:
+            raise ValueError(f"Failed to deploy schema '{schema_name}': {e}")
+
+        self.schemas[schema_name] = {
+            'config': schema_dict,
+            'engine': engine,
+        }
+
+        print(f"✓ Schema replaced: {schema_name}")
+        return engine
     
     def get_engine(self, schema_name: str) -> ExecutionEngine:
         """

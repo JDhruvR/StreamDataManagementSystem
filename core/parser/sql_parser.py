@@ -66,12 +66,16 @@ class SQLTransformer(Transformer):
     def where_clause(self, items):
         return items[0]
 
+    def join_operator(self, items):
+        return items[0].value
+
     def join_clause(self, items):
         return {
             "join_type": "INNER",
             "table": items[0],
             "left_field": items[1],
-            "right_field": items[2],
+            "operator": items[2],
+            "right_field": items[3],
         }
 
     def func_name(self, items):

@@ -23,7 +23,7 @@
       "name": "avg_pollution",
       "input_stream": "pollution_stream",
       "output_stream": "pollution_out",
-      "query": "SELECT AVG(value), name FROM pollution_stream INNER JOIN sensors ON sensor_id = id"
+      "query": "SELECT MAX(value), name, AVG(value) FROM pollution_stream INNER JOIN sensors ON sensor_id = id"
     }
   ],
   "output_streams": [

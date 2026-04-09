@@ -1,8 +1,3 @@
-"""
-Reference Table Store: Manage static/dimension tables for stream enrichment and JOINs.
-Backend: SQLite file-based storage.
-"""
-
 import os
 import re
 import sqlite3
@@ -10,7 +5,7 @@ from typing import Any, Dict, List, Tuple
 
 
 class ReferenceTableStore:
-    """Manage reference/dimension tables for stream-to-table JOINs."""
+    """Manage reference/dimension tables"""
 
     _VALID_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
     _TYPE_MAP = {

@@ -78,9 +78,37 @@ class WindowOperator(Operator):
         if self.next_op and self.buffer:
             self.next_op.process(list(self.buffer))
 
+
+class ProjectionOperator(Operator):
+    def __init__(self, select_list, next_op=None):
+        self.select_list = select_list
+        self.next_op = next_op
+
+    def process(self, event):
+        if self.next_op is None:
+            return
+
+        if self.select_list == '*':
+            self.next_op.process(event)
+            return
+
+        if not isinstance(self.select_list, list):
+            self.next_op.process(event)
+            return
+
+        projected = {}
+        for item in self.select_list:
+            if isinstance(item, str) and item in event:
+                projected[item] = event[item]
+
+        self.next_op.process(projected)
+
 class AggregateOperator(Operator):
-    def __init__(self, agg_config, group_by_fields=[], next_op=None, select_list=None):
-        self.agg_config = agg_config
+    def __init__(self, agg_configs, group_by_fields=[], next_op=None, select_list=None):
+        if isinstance(agg_configs, dict):
+            self.agg_configs = [agg_configs]
+        else:
+            self.agg_configs = list(agg_configs)
         self.group_by = group_by_fields
         self.next_op = next_op
         self.select_list = select_list if isinstance(select_list, list) else []
@@ -91,9 +119,6 @@ class AggregateOperator(Operator):
         
         if not isinstance(events, list):
             events = [events]
-
-        func = self.agg_config['func']
-        field = self.agg_config['field']
 
         # If non-aggregate fields are selected, aggregate per unique key tuple.
         try:
@@ -106,18 +131,25 @@ class AggregateOperator(Operator):
                 groups[()] = events
 
             for key, grouped_events in groups.items():
-                values = [e[field] for e in grouped_events if field in e]
-                if not values:
+                agg_results = {}
+                for agg in self.agg_configs:
+                    func = agg['func']
+                    field = agg['field']
+                    values = [e[field] for e in grouped_events if field in e]
+                    if not values:
+                        continue
+
+                    result_val = None
+                    if func == 'COUNT': result_val = len(values)
+                    elif func == 'SUM': result_val = sum(values)
+                    elif func == 'AVG': result_val = statistics.mean(values)
+                    elif func == 'MAX': result_val = max(values)
+                    elif func == 'MIN': result_val = min(values)
+
+                    agg_results[(func, field)] = result_val
+
+                if not agg_results:
                     continue
-
-                result_val = None
-                if func == 'COUNT': result_val = len(values)
-                elif func == 'SUM': result_val = sum(values)
-                elif func == 'AVG': result_val = statistics.mean(values)
-                elif func == 'MAX': result_val = max(values)
-                elif func == 'MIN': result_val = min(values)
-
-                agg_col_name = f"{func}({field})"
 
                 # Build output in SELECT order, matching SQL-like projection shape.
                 if self.select_list:
@@ -129,10 +161,15 @@ class AggregateOperator(Operator):
                                 result_event[item] = key[gb_idx]
                             elif grouped_events and item in grouped_events[0]:
                                 result_event[item] = grouped_events[0][item]
-                        elif isinstance(item, dict) and item.get('func') == func and item.get('field') == field:
-                            result_event[agg_col_name] = result_val
+                        elif isinstance(item, dict) and 'func' in item and 'field' in item:
+                            func = item['func']
+                            field = item['field']
+                            if (func, field) in agg_results:
+                                result_event[f"{func}({field})"] = agg_results[(func, field)]
                 else:
-                    result_event = {agg_col_name: result_val}
+                    result_event = {}
+                    for (func, field), val in agg_results.items():
+                        result_event[f"{func}({field})"] = val
                     for idx, gb_field in enumerate(self.group_by):
                         result_event[gb_field] = key[idx]
 
@@ -145,10 +182,11 @@ class AggregateOperator(Operator):
 class JoinOperator(Operator):
     """INNER JOIN stream events with rows from a persistent SQLite table."""
 
-    def __init__(self, table_name, left_field, right_field, next_op=None, db_path='data/static_tables.db'):
+    def __init__(self, table_name, left_field, right_field, operator='=', next_op=None, db_path='data/static_tables.db'):
         self.table_name = table_name
         self.left_field = left_field
         self.right_field = right_field
+        self.operator = operator
         self.next_op = next_op
         self.db_path = db_path
         self._conn = None
@@ -171,7 +209,13 @@ class JoinOperator(Operator):
         conn = self._get_conn()
 
         try:
-            query = f'SELECT * FROM "{self.table_name}" WHERE "{self.right_field}" = ?'
+            op_map = {'=': '=', '!=': '!='}
+            sql_op = op_map.get(self.operator)
+            if sql_op is None:
+                print(f"Join error: unsupported join operator '{self.operator}'")
+                return
+
+            query = f'SELECT * FROM "{self.table_name}" WHERE "{self.right_field}" {sql_op} ?'
             rows = conn.execute(query, (join_value,)).fetchall()
         except Exception as e:
             print(f"Join error on table '{self.table_name}': {e}")
