@@ -6,6 +6,7 @@
     "type": "time",
     "value": 10
   },
+  "window_type": "tumbling",
   "input_streams": [
     {
       "name": "pollution_stream",

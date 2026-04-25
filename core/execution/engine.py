@@ -63,6 +63,7 @@ class ExecutionEngine:
             'window_size': schema['window_size'],
             'window_unit': schema['window_unit'],
             'velocity': schema['velocity'],
+            'window_type': schema['window_type'],
         }
         
         # Register input streams
@@ -188,7 +189,7 @@ class ExecutionEngine:
             )
             # Window operator (using schema-level config, NOT query-level)
             window_config = {
-                'type': 'TUMBLING',  # Default to tumbling
+                'type': self.window_config['window_type'],
                 'size': self.window_config['window_size'],
                 'unit': self.window_config['window_unit']
             }
@@ -224,8 +225,8 @@ class ExecutionEngine:
                     right_field=join_cfg['right_field'],
                     operator=join_cfg.get('operator', '='),
                     window_seconds=self._window_size_seconds(),
-                    next_op=pipeline,
-                    state_table_name=f"join_state_{query_name}"
+                    window_type=self.window_config['window_type'],
+                    next_op=pipeline
                 )
                 input_streams.add(join_source)
                 pipeline_type = 'stream_stream_join'

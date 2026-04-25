@@ -1,0 +1,106 @@
+{
+    "schema_name": "smart_city_traffic_demo",
+    "window_size": 15,
+    "window_unit": "seconds",
+    "velocity": {
+        "type": "time",
+        "value": 15
+    },
+    "window_type": "tumbling",
+    "input_streams": [
+        {
+            "name": "vehicle_stream",
+            "topic": "vehicle_stream",
+            "schema": {
+                "timestamp": "STRING",
+                "vehicle_id": "STRING",
+                "junction_id": "STRING",
+                "speed": "FLOAT",
+                "vehicle_type": "STRING",
+                "lane": "INT"
+            }
+        },
+        {
+            "name": "signal_stream",
+            "topic": "signal_stream",
+            "schema": {
+                "timestamp": "STRING",
+                "junction_id": "STRING",
+                "signal_phase": "STRING",
+                "phase_duration": "INT",
+                "congestion_level": "INT"
+            }
+        }
+    ],
+    "static_tables": [
+        {
+            "name": "junction_meta",
+            "source": "junction_metadata.json",
+            "schema": {
+                "junction_id": "STRING",
+                "zone": "STRING",
+                "speed_limit": "FLOAT",
+                "junction_name": "STRING"
+            }
+        }
+    ],
+    "continuous_queries": [
+        {
+            "name": "vehicle_signal_join",
+            "description": "Stream-stream join: vehicles arriving at junctions matched with live signal phase",
+            "input_stream": "vehicle_stream",
+            "output_stream": "vehicle_signal_out",
+            "query": "SELECT vehicle_id, junction_id, speed, vehicle_type, signal_phase, congestion_level FROM vehicle_stream INNER JOIN signal_stream ON junction_id = junction_id"
+        },
+        {
+            "name": "zone_enriched_vehicles",
+            "description": "Stream-static join: enrich vehicle events with junction zone and speed limit metadata",
+            "input_stream": "vehicle_stream",
+            "output_stream": "zone_enriched_out",
+            "query": "SELECT vehicle_id, junction_id, speed, vehicle_type, zone, speed_limit, junction_name FROM vehicle_stream INNER JOIN junction_meta ON junction_id = junction_id"
+        },
+        {
+            "name": "junction_vehicle_count",
+            "description": "Group by + aggregation: count vehicles and compute average speed per junction per window",
+            "input_stream": "vehicle_stream",
+            "output_stream": "junction_stats_out",
+            "query": "SELECT junction_id, COUNT(vehicle_id), AVG(speed) FROM vehicle_stream GROUP BY junction_id"
+        }
+    ],
+    "output_streams": [
+        {
+            "name": "vehicle_signal_out",
+            "topic": "vehicle_signal_out",
+            "schema": {
+                "vehicle_id": "STRING",
+                "junction_id": "STRING",
+                "speed": "FLOAT",
+                "vehicle_type": "STRING",
+                "signal_phase": "STRING",
+                "congestion_level": "INT"
+            }
+        },
+        {
+            "name": "zone_enriched_out",
+            "topic": "zone_enriched_out",
+            "schema": {
+                "vehicle_id": "STRING",
+                "junction_id": "STRING",
+                "speed": "FLOAT",
+                "vehicle_type": "STRING",
+                "zone": "STRING",
+                "speed_limit": "FLOAT",
+                "junction_name": "STRING"
+            }
+        },
+        {
+            "name": "junction_stats_out",
+            "topic": "junction_stats_out",
+            "schema": {
+                "junction_id": "STRING",
+                "COUNT(vehicle_id)": "INT",
+                "AVG(speed)": "FLOAT"
+            }
+        }
+    ]
+}

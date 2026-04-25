@@ -55,7 +55,9 @@ class WindowOperator(Operator):
         elif unit == "HOURS":
             size *= 3600
         self.window_size_seconds = size
-        self.window_type = str(window_config.get("type", "TUMBLING")).upper()
+        self.window_type = str(window_config.get("type", "tumbling")).upper()
+        if self.window_type not in ["TUMBLING", "SLIDING"]:
+            raise ValueError(f"Unsupported window type: {self.window_type}")
 
         velocity_type = str(self.velocity_config.get("type", "count")).upper()
         velocity_value = float(self.velocity_config.get("value", 1))
@@ -64,14 +66,17 @@ class WindowOperator(Operator):
         self.velocity_type = velocity_type
         self.velocity_value = velocity_value
 
-        now = self.time_fn()
-        self.window_start_time = now
-        self.last_emit_time = now
+        self.window_start_time = None
+        self.last_emit_time = None
         self.events_since_emit = 0
         self.buffer = deque()
 
     def process(self, event):
         now = self.time_fn()
+        if self.window_start_time is None:
+            self.window_start_time = now
+        if self.last_emit_time is None:
+            self.last_emit_time = now
 
         if self.window_type == "TUMBLING":
             self._roll_tumbling_window(now)
@@ -79,13 +84,13 @@ class WindowOperator(Operator):
         elif self.window_type == "SLIDING":
             self.buffer.append((now, event))
             self._evict_old_events(now)
+            
+            self.events_since_emit += 1
+            if self._should_emit(now):
+                self.emit_window()
+                self._reset_velocity_state(now)
         else:
             raise ValueError(f"Unsupported window type: {self.window_type}")
-
-        self.events_since_emit += 1
-        if self._should_emit(now):
-            self.emit_window()
-            self._reset_velocity_state(now)
 
     def _roll_tumbling_window(self, now):
         elapsed = now - self.window_start_time
@@ -329,10 +334,10 @@ class StreamStreamJoinOperator:
         right_field,
         operator="=",
         window_seconds=10,
+        window_type="TUMBLING",
         next_op=None,
         time_fn=None,
-        state_table_name=None,
-        db_path='data/join_states.db'
+        state_table_name=None
     ):
         self.left_stream = left_stream
         self.right_stream = right_stream
@@ -340,11 +345,12 @@ class StreamStreamJoinOperator:
         self.right_field = right_field
         self.operator = operator
         self.window_seconds = float(window_seconds)
+        self.window_type = str(window_type).upper()
         self.next_op = next_op
         self.time_fn = time_fn or time.time
         
         self.state_table_name = state_table_name
-        self.db_path = db_path
+        self.window_start_time = None
         self._conn = None
         self._lock = threading.Lock()
 
@@ -404,16 +410,34 @@ class StreamStreamJoinOperator:
         outputs = []
         with self._lock:
             now = self.time_fn()
-            self._evict_old(now)
+            
+            if self.window_start_time is None:
+                self.window_start_time = now
+            
+            if self.window_type == "TUMBLING":
+                elapsed = now - self.window_start_time
+                if elapsed >= self.window_seconds:
+                    outputs = self._join_all_buffers()
+                    
+                    windows_advanced = int(elapsed // self.window_seconds)
+                    self.window_start_time += windows_advanced * self.window_seconds
+                    
+                    self.left_buffer.clear()
+                    self.right_buffer.clear()
+                    self._clear_all_db_state()
+            else:
+                self._evict_old(now)
 
             if stream_name == self.left_stream:
                 self.left_buffer.append((now, event))
                 self._persist_event('left', now, event)
-                outputs = self._join_against_buffer(event, self.right_buffer, left_event=True)
+                if self.window_type == "SLIDING":
+                    outputs = self._join_against_buffer(event, self.right_buffer, left_event=True)
             elif stream_name == self.right_stream:
                 self.right_buffer.append((now, event))
                 self._persist_event('right', now, event)
-                outputs = self._join_against_buffer(event, self.left_buffer, left_event=False)
+                if self.window_type == "SLIDING":
+                    outputs = self._join_against_buffer(event, self.left_buffer, left_event=False)
 
         for merged in outputs:
             self.next_op.process(merged)
@@ -435,6 +459,25 @@ class StreamStreamJoinOperator:
                 conn.commit()
             except Exception as e:
                 print(f"Failed to evict old join events from DB: {e}")
+
+    def _clear_all_db_state(self):
+        if self.state_table_name:
+            try:
+                conn = self._get_conn()
+                conn.execute(f'DELETE FROM "{self.state_table_name}"')
+                conn.commit()
+            except Exception as e:
+                print(f"Failed to clear db state: {e}")
+
+    def _join_all_buffers(self):
+        results = []
+        for left_ts, left_event in list(self.left_buffer):
+            for right_ts, right_event in list(self.right_buffer):
+                if self.left_field in left_event and self.right_field in right_event:
+                    if self._matches(left_event[self.left_field], right_event[self.right_field]):
+                        merged = self._merge_events(left_event, right_event)
+                        results.append(merged)
+        return results
 
     def _join_against_buffer(self, incoming_event, other_buffer, left_event):
         incoming_key = self.left_field if left_event else self.right_field

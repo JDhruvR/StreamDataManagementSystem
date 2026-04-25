@@ -61,7 +61,8 @@ class SchemaManager:
     VALID_WINDOW_UNITS = ['seconds', 'minutes', 'hours']
     VALID_VELOCITY_TYPES = ['count', 'time']
     VALID_DATA_TYPES = ['STRING', 'INT', 'FLOAT', 'TIMESTAMP', 'BOOLEAN']
-    
+    VALID_WINDOW_TYPE = ['tumbling', 'sliding']
+
     def __init__(self):
         self.schema = None
         self.schema_path = None
@@ -272,7 +273,8 @@ class SchemaManager:
         return {
             'window_size': self.schema['window_size'],
             'window_unit': self.schema['window_unit'],
-            'velocity': self.schema['velocity']
+            'velocity': self.schema['velocity'],
+            'window_type': self.schema['window_type'],
         }
     
     def get_input_streams(self) -> List[Dict[str, Any]]:
