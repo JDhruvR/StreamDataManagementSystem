@@ -82,3 +82,12 @@ def set_default_config(broker: str = KafkaConfig.BROKER_DEFAULT):
 def get_default_config() -> KafkaConfig:
     """Get the default Kafka configuration."""
     return _default_config
+
+# def get_default_config():
+#     """Return Kafka configuration."""
+#     # Change from in-memory to real broker
+#     return KafkaConfig(
+#         mode='broker',
+#         broker='localhost:9092',
+#         retention_ms=3600000  # 1 hour retention
+#     )

@@ -3,8 +3,8 @@
   "window_size": 10,
   "window_unit": "seconds",
   "velocity": {
-    "type": "count",
-    "value": 100
+    "type": "time",
+    "value": 10
   },
   "input_streams": [
     {
@@ -23,7 +23,7 @@
       "name": "avg_pollution",
       "input_stream": "pollution_stream",
       "output_stream": "pollution_out",
-      "query": "SELECT MAX(value), name, AVG(value) FROM pollution_stream INNER JOIN sensors ON sensor_id = id"
+      "query": "SELECT pollutant, MAX(value) FROM pollution_stream GROUP BY pollutant"
     }
   ],
   "output_streams": [

@@ -53,7 +53,7 @@ class StreamConsumer:
         
         consumer_config = config.get_consumer_config(group_id or 'default_group')
         consumer_config['bootstrap_servers'] = bootstrap_servers
-        consumer_config['auto_offset_reset'] = 'earliest'  # Read from start of stream
+        consumer_config['auto_offset_reset'] = 'latest'  # Read only new events
         
         self.consumer = KafkaConsumer(
             topic,

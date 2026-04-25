@@ -13,12 +13,16 @@ def generate_reading():
     # Generate realistic values based on pollutant
     if pollutant == 'PM2.5':
         value = random.uniform(5.0, 150.0)
+        #value = random.choices([10.0, 20.0], weights=[0.5, 0.5])[0]
     elif pollutant == 'PM10':
         value = random.uniform(10.0, 200.0)
+        #value = random.choices([100.0, 200.0], weights=[0.5, 0.5])[0]
     elif pollutant == 'CO2':
         value = random.uniform(300.0, 600.0)
+        #value = random.choices([100.0, 200.0], weights=[0.5, 0.5])[0]
     else:  # NO2
         value = random.uniform(10.0, 80.0)
+        #value = random.choices([100.0, 200.0], weights=[0.5, 0.5])[0]
     
     return {
         "timestamp": datetime.datetime.now().isoformat(),
@@ -31,11 +35,17 @@ def main():
     producer = StreamProducer()
     topic = 'pollution_stream'
     print(f"Starting to stream pollution data to topic '{topic}'...")
+    sum=0
+    count=0
     try:
         while True:
             data = generate_reading()
             producer.send(topic, data)
-            print(f"Sent: {data}")
+            #print(f"Sent: {data}")
+            sum+=data['value']
+            count+=1
+            print(f"Count: {count}")
+            
             time.sleep(random.uniform(0.5, 2.0))
     except KeyboardInterrupt:
         print("Stopping sensor simulator.")

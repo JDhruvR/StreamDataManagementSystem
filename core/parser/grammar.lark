@@ -6,7 +6,7 @@ statement: create_table
 
 create_table: "CREATE" "TABLE" identifier "(" column_defs ")"
 create_stream: "CREATE" "STREAM" identifier "(" column_defs ")" "WITH" "(" stream_options ")"
-select_query: "SELECT" select_list "FROM" identifier (join_clause)? (where_clause)?
+select_query: "SELECT" select_list "FROM" identifier (join_clause)? (where_clause)? (group_by_clause)?
 join_clause: "INNER" "JOIN" identifier "ON" identifier join_operator identifier
 !join_operator: "=" | "!="
 
@@ -23,6 +23,9 @@ where_clause: "WHERE" condition
 condition: identifier operator condition_value
 condition_value: literal | string_literal
 !operator: ">" | "<" | "=" | ">=" | "<=" | "!="
+
+group_by_clause: "GROUP" "BY" group_by_list
+group_by_list: identifier ("," identifier)*
 
 stream_options: stream_option ("," stream_option)*
 stream_option: identifier "=" string_literal

@@ -62,7 +62,7 @@ class ExecutionEngine:
         self.window_config = {
             'window_size': schema['window_size'],
             'window_unit': schema['window_unit'],
-            'velocity': schema['velocity']
+            'velocity': schema['velocity'],
         }
         
         # Register input streams
@@ -121,7 +121,7 @@ class ExecutionEngine:
             raise ValueError(f"Failed to parse query '{query_name}': {e}")
         
         # Build operator pipeline with schema-level window/velocity config
-        deployment = self._build_pipeline(query_plan, output_stream_name)
+        deployment = self._build_pipeline(query_name, query_plan, output_stream_name)
         
         # Store query metadata
         self.queries.append({
@@ -146,7 +146,7 @@ class ExecutionEngine:
             return size * 3600
         return size
 
-    def _build_pipeline(self, query_plan: Dict[str, Any], output_stream_name: str) -> Dict[str, Any]:
+    def _build_pipeline(self, query_name: str, query_plan: Dict[str, Any], output_stream_name: str) -> Dict[str, Any]:
         """
         Build operator pipeline from query plan.
         
@@ -172,6 +172,9 @@ class ExecutionEngine:
                     agg_configs.append(item)
                 else:
                     group_by.append(item)
+
+        if 'group_by' in query_plan:
+            group_by = query_plan['group_by']
         
         has_aggregate = len(agg_configs) > 0
 
@@ -181,6 +184,7 @@ class ExecutionEngine:
                 group_by_fields=group_by,
                 next_op=pipeline,
                 select_list=select_list,
+                state_table_name=f"agg_state_{query_name}"
             )
             # Window operator (using schema-level config, NOT query-level)
             window_config = {
@@ -221,6 +225,7 @@ class ExecutionEngine:
                     operator=join_cfg.get('operator', '='),
                     window_seconds=self._window_size_seconds(),
                     next_op=pipeline,
+                    state_table_name=f"join_state_{query_name}"
                 )
                 input_streams.add(join_source)
                 pipeline_type = 'stream_stream_join'

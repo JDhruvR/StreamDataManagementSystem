@@ -61,7 +61,7 @@ def main():
     
     # Try to load example schema first, or prompt for input
     try:
-        schema = schema_manager.load_from_file('schemas/pollution_schema.json')
+        schema = schema_manager.load_from_file('schemas/pollution2.json')
         print()
     except FileNotFoundError:
         print("  Using interactive schema input...")

@@ -3,6 +3,7 @@ import sqlite3
 import statistics
 import threading
 import time
+import json
 from abc import ABC, abstractmethod
 from collections import deque
 
@@ -33,7 +34,10 @@ class FilterOperator(Operator):
         elif op == '>=': passed = event_val >= val
         elif op == '<=': passed = event_val <= val
         elif op == '!=': passed = event_val != val
-
+        
+        if passed:
+            print(f"[FILTER] Result: {event_val}", flush=True)  # ADD THIS
+        
         if passed and self.next_op:
             self.next_op.process(event)
 
@@ -146,7 +150,7 @@ class ProjectionOperator(Operator):
         self.next_op.process(projected)
 
 class AggregateOperator(Operator):
-    def __init__(self, agg_configs, group_by_fields=[], next_op=None, select_list=None):
+    def __init__(self, agg_configs, group_by_fields=[], next_op=None, select_list=None, state_table_name=None, db_path='data/aggregate_states.db'):
         if isinstance(agg_configs, dict):
             self.agg_configs = [agg_configs]
         else:
@@ -154,6 +158,22 @@ class AggregateOperator(Operator):
         self.group_by = group_by_fields
         self.next_op = next_op
         self.select_list = select_list if isinstance(select_list, list) else []
+        self.state_table_name = state_table_name
+        self.db_path = db_path
+        self._conn = None
+
+    def _get_conn(self):
+        if self._conn is None:
+            os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            if self.state_table_name:
+                self._conn.execute(
+                    f'CREATE TABLE IF NOT EXISTS "{self.state_table_name}" ('
+                    'group_key TEXT PRIMARY KEY, state_data TEXT)'
+                )
+                self._conn.commit()
+        return self._conn
 
     def process(self, events):
         # Expects a list of events (e.g. from a window)
@@ -172,26 +192,103 @@ class AggregateOperator(Operator):
             else:
                 groups[()] = events
 
+            conn = self._get_conn() if self.state_table_name else None
+
             for key, grouped_events in groups.items():
+                state_data = {}
+                key_str = json.dumps(key)
+                if conn:
+                    row = conn.execute(
+                        f'SELECT state_data FROM "{self.state_table_name}" WHERE group_key = ?',
+                        (key_str,)
+                    ).fetchone()
+                    if row:
+                        state_data = json.loads(row['state_data'])
+
                 agg_results = {}
                 for agg in self.agg_configs:
                     func = agg['func']
                     field = agg['field']
+                    state_key = f"{func}_{field}"
+
                     values = [e[field] for e in grouped_events if field in e]
-                    if not values:
+                    if not values and state_key + "_count" not in state_data:
+                        continue
+
+                    # Local values
+                    w_count = len(values)
+                    if(func=="SUM"):
+                        w_sum = sum(values) if values else 0
+                    elif(func=="MAX"):
+                        w_max = max(values) if values else None
+                    elif(func=="MIN"):
+                        w_min = min(values) if values else None
+                    elif(func=="AVG"):
+                        w_avg = sum(values) / len(values) if values else 0
+
+                    # Merge
+                    
+                    prev_count = state_data.get(f"{state_key}_count", 0)
+                    new_count = prev_count + w_count
+                    if(func=="SUM"):
+                        prev_sum = state_data.get(f"{state_key}_sum", 0)
+                        new_sum = prev_sum + w_sum
+                    elif(func=="MAX"):
+                        prev_max = state_data.get(f"{state_key}_max")
+                        new_max = max(prev_max, w_max) if prev_max is not None else w_max
+                    elif(func=="MIN"):
+                        prev_min = state_data.get(f"{state_key}_min")
+                        new_min = min(prev_min, w_min) if prev_min is not None else w_min
+                    elif(func=="AVG"):
+                        prev_avg = state_data.get(f"{state_key}_avg", 0)
+                        new_avg = (prev_avg * prev_count + w_avg * w_count) / (prev_count + w_count) if prev_count + w_count > 0 else 0
+
+                    # new_count = prev_count + w_count
+                    # new_sum = prev_sum + w_sum
+
+                    # if w_max is not None:
+                    #     new_max = max(prev_max, w_max) if prev_max is not None else w_max
+                    # else:
+                    #     new_max = prev_max
+
+                    # if w_min is not None:
+                    #     new_min = min(prev_min, w_min) if prev_min is not None else w_min
+                    # else:
+                    #     new_min = prev_min
+
+                    # Update state
+                    state_data[f"{state_key}_count"] = new_count
+                    if(func=="SUM"):
+                        state_data[f"{state_key}_sum"] = new_sum
+                    elif(func=="MAX"):
+                        state_data[f"{state_key}_max"] = new_max
+                    elif(func=="MIN"):
+                        state_data[f"{state_key}_min"] = new_min
+                    elif(func=="AVG"):
+                        state_data[f"{state_key}_avg"] = new_avg
+
+                    if new_count == 0:
                         continue
 
                     result_val = None
-                    if func == 'COUNT': result_val = len(values)
-                    elif func == 'SUM': result_val = sum(values)
-                    elif func == 'AVG': result_val = statistics.mean(values)
-                    elif func == 'MAX': result_val = max(values)
-                    elif func == 'MIN': result_val = min(values)
+                    if func == 'COUNT': result_val = new_count
+                    elif func == 'SUM': result_val = new_sum
+                    elif func == 'AVG': result_val = new_avg
+                    elif func == 'MAX': result_val = new_max
+                    elif func == 'MIN': result_val = new_min
 
                     agg_results[(func, field)] = result_val
 
                 if not agg_results:
                     continue
+
+                if conn:
+                    conn.execute(
+                        f'INSERT INTO "{self.state_table_name}" (group_key, state_data) VALUES (?, ?) '
+                        'ON CONFLICT(group_key) DO UPDATE SET state_data = excluded.state_data',
+                        (key_str, json.dumps(state_data))
+                    )
+                    conn.commit()
 
                 # Build output in SELECT order, matching SQL-like projection shape.
                 if self.select_list:
@@ -234,6 +331,8 @@ class StreamStreamJoinOperator:
         window_seconds=10,
         next_op=None,
         time_fn=None,
+        state_table_name=None,
+        db_path='data/join_states.db'
     ):
         self.left_stream = left_stream
         self.right_stream = right_stream
@@ -243,10 +342,60 @@ class StreamStreamJoinOperator:
         self.window_seconds = float(window_seconds)
         self.next_op = next_op
         self.time_fn = time_fn or time.time
+        
+        self.state_table_name = state_table_name
+        self.db_path = db_path
+        self._conn = None
+        self._lock = threading.Lock()
 
         self.left_buffer = deque()
         self.right_buffer = deque()
-        self._lock = threading.Lock()
+        self._init_state()
+
+    def _get_conn(self):
+        if self._conn is None:
+            os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+        return self._conn
+
+    def _init_state(self):
+        if not self.state_table_name:
+            return
+        conn = self._get_conn()
+        conn.execute(f'''
+            CREATE TABLE IF NOT EXISTS "{self.state_table_name}" (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stream_side TEXT,
+                timestamp REAL,
+                event_data TEXT
+            )
+        ''')
+        conn.commit()
+        
+        try:
+            rows = conn.execute(f'SELECT stream_side, timestamp, event_data FROM "{self.state_table_name}" ORDER BY timestamp ASC').fetchall()
+            for row in rows:
+                event = json.loads(row['event_data'])
+                if row['stream_side'] == 'left':
+                    self.left_buffer.append((row['timestamp'], event))
+                elif row['stream_side'] == 'right':
+                    self.right_buffer.append((row['timestamp'], event))
+        except sqlite3.OperationalError:
+            pass
+
+    def _persist_event(self, stream_side, timestamp, event):
+        if not self.state_table_name:
+            return
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                f'INSERT INTO "{self.state_table_name}" (stream_side, timestamp, event_data) VALUES (?, ?, ?)',
+                (stream_side, timestamp, json.dumps(event))
+            )
+            conn.commit()
+        except Exception as e:
+            print(f"Failed to persist join event: {e}")
 
     def process(self, stream_name, event):
         if self.next_op is None:
@@ -259,9 +408,11 @@ class StreamStreamJoinOperator:
 
             if stream_name == self.left_stream:
                 self.left_buffer.append((now, event))
+                self._persist_event('left', now, event)
                 outputs = self._join_against_buffer(event, self.right_buffer, left_event=True)
             elif stream_name == self.right_stream:
                 self.right_buffer.append((now, event))
+                self._persist_event('right', now, event)
                 outputs = self._join_against_buffer(event, self.left_buffer, left_event=False)
 
         for merged in outputs:
@@ -269,10 +420,21 @@ class StreamStreamJoinOperator:
 
     def _evict_old(self, now):
         cutoff = now - self.window_seconds
+        evicted = False
         while self.left_buffer and self.left_buffer[0][0] < cutoff:
             self.left_buffer.popleft()
+            evicted = True
         while self.right_buffer and self.right_buffer[0][0] < cutoff:
             self.right_buffer.popleft()
+            evicted = True
+            
+        if evicted and self.state_table_name:
+            try:
+                conn = self._get_conn()
+                conn.execute(f'DELETE FROM "{self.state_table_name}" WHERE timestamp < ?', (cutoff,))
+                conn.commit()
+            except Exception as e:
+                print(f"Failed to evict old join events from DB: {e}")
 
     def _join_against_buffer(self, incoming_event, other_buffer, left_event):
         incoming_key = self.left_field if left_event else self.right_field

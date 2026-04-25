@@ -66,6 +66,12 @@ class SQLTransformer(Transformer):
     def where_clause(self, items):
         return items[0]
 
+    def group_by_list(self, items):
+        return [item for item in items if isinstance(item, str)]
+
+    def group_by_clause(self, items):
+        return {"group_by": items[0]}
+
     def join_operator(self, items):
         return items[0].value
 
@@ -99,13 +105,15 @@ class SQLTransformer(Transformer):
             "from": items[1]
         }
         
-        # Parse JOIN/WHERE clauses if present
+        # Parse JOIN/WHERE/GROUP BY clauses if present
         if len(items) > 2:
             for item in items[2:]:
                 if isinstance(item, dict) and "join_type" in item:
                     query["join"] = item
                 elif isinstance(item, dict) and "field" in item and "operator" in item:
                     query["where"] = item
+                elif isinstance(item, dict) and "group_by" in item:
+                    query["group_by"] = item["group_by"]
 
         return query
 
