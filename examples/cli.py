@@ -12,6 +12,9 @@ import re
 import sqlite3
 import threading
 import time
+import webbrowser
+import subprocess
+import sys
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.execution.schema_registry import get_global_registry
@@ -111,6 +114,10 @@ class StreamingCLI:
         self.consumer_threads: List[threading.Thread] = []
         self._consumer_keys: Set[Tuple[str, str]] = set()
         self.table_store = ReferenceTableStore(os.path.join("data", "static_tables.db"))
+        
+        # UI server process
+        self.ui_server_process = None
+        self.ui_server_port = 5000
 
         if schema_path:
             self.load_schema_from_file(schema_path)
@@ -501,6 +508,94 @@ class StreamingCLI:
         except Exception as exc:
             print(f"Failed to select rows: {exc}")
 
+    def launch_ui(self, port: int = 5000) -> None:
+        """
+        Launch the UI dashboard in a background process.
+        
+        Args:
+            port: Port to run the Flask server on
+        """
+        if self.ui_server_process and self.ui_server_process.poll() is None:
+            print(f"UI server already running on port {self.ui_server_port}")
+            print(f"Open your browser to: http://localhost:{self.ui_server_port}")
+            return
+        
+        try:
+            self.ui_server_port = port
+            print(f"Starting UI server on port {port}...")
+            
+            # Create a Python script to run the Flask app
+            ui_script = f"""
+import os
+import sys
+os.environ['SDMS_UI_PORT'] = '{port}'
+os.environ['SDMS_KAFKA_BROKER'] = '{self.config.get_broker()}'
+
+from ui.app import UIApp
+
+app = UIApp()
+app.initialize_kafka_consumer()
+app.start(port={port})
+"""
+            
+            # Run the UI server in a subprocess
+            self.ui_server_process = subprocess.Popen(
+                [sys.executable, "-c", ui_script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Give the server time to start
+            time.sleep(2)
+            
+            # Check if process is still running
+            if self.ui_server_process.poll() is not None:
+                stdout, stderr = self.ui_server_process.communicate()
+                print(f"UI server failed to start:")
+                print(f"STDERR: {stderr}")
+                print(f"STDOUT: {stdout}")
+                self.ui_server_process = None
+                return
+            
+            print(f"✓ UI server started on http://localhost:{port}")
+            
+            # Open browser
+            try:
+                webbrowser.open(f"http://localhost:{port}")
+                print("✓ Browser opened (if not, visit http://localhost:{port})")
+            except Exception as e:
+                print(f"Could not open browser automatically: {e}")
+                print(f"Visit http://localhost:{port} manually")
+            
+        except Exception as exc:
+            print(f"Failed to launch UI server: {exc}")
+    
+    def stop_ui(self) -> None:
+        """Stop the UI server if running."""
+        if self.ui_server_process and self.ui_server_process.poll() is None:
+            try:
+                self.ui_server_process.terminate()
+                self.ui_server_process.wait(timeout=5)
+                print("✓ UI server stopped")
+            except subprocess.TimeoutExpired:
+                self.ui_server_process.kill()
+                print("✓ UI server killed")
+            except Exception as e:
+                print(f"Error stopping UI server: {e}")
+            finally:
+                self.ui_server_process = None
+        
+    def ui_status(self) -> None:
+        """Check UI server status."""
+        if self.ui_server_process is None:
+            print("UI server: not started")
+        elif self.ui_server_process.poll() is None:
+            print(f"UI server: running on port {self.ui_server_port}")
+            print(f"URL: http://localhost:{self.ui_server_port}")
+        else:
+            print(f"UI server: stopped (exit code: {self.ui_server_process.returncode})")
+
     def run(self) -> None:
         print("\nStreamDataManagementSystem Interactive CLI")
         print("Type 'help' for commands.")
@@ -515,6 +610,7 @@ class StreamingCLI:
                 raw_cmd = input("sdms> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print("\nExiting CLI.")
+                self.stop_ui()
                 break
 
             cmd_parts = raw_cmd.split(maxsplit=1)
@@ -541,6 +637,7 @@ class StreamingCLI:
 
             if cmd in {"exit", "quit"}:
                 print("Exiting CLI.")
+                self.stop_ui()
                 break
             if cmd == "help":
                 print("\nCommands:")
@@ -552,6 +649,7 @@ class StreamingCLI:
                 print("  add_input - add an input stream to active schema")
                 print("  query  - deploy a new continuous SELECT query")
                 print("  save   - save active schema to disk now")
+                print("  ui [--port 5000] - launch web UI dashboard")
                 print("  table_create - create a persistent table")
                 print("  table_add_column - add a column to a table")
                 print("  table_insert - insert one row using JSON")
@@ -603,6 +701,22 @@ class StreamingCLI:
                 self._persist_active_schema()
                 print(f"Schema saved to {self.active_schema_path}")
                 continue
+            if cmd == "ui":
+                port = 5000
+                if arg:
+                    try:
+                        port = int(arg)
+                    except ValueError:
+                        print("Invalid port. Using default port 5000.")
+                        port = 5000
+                
+                if not self.engine:
+                    print("No active schema. Load or create a schema first.")
+                    continue
+                
+                self.launch_ui(port)
+                continue
+
             if cmd == "table_create":
                 self.table_create_interactive()
                 continue
