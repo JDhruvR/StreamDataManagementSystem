@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 import threading
 import time
 import webbrowser
@@ -523,6 +524,10 @@ class StreamingCLI:
         try:
             self.ui_server_port = port
             print(f"Starting UI server on port {port}...")
+
+            active_schema_abs = ""
+            if self.active_schema_path:
+                active_schema_abs = os.path.abspath(self.active_schema_path)
             
             # Create a Python script to run the Flask app
             ui_script = f"""
@@ -530,6 +535,7 @@ import os
 import sys
 os.environ['SDMS_UI_PORT'] = '{port}'
 os.environ['SDMS_KAFKA_BROKER'] = '{self.config.get_broker()}'
+os.environ['SDMS_ACTIVE_SCHEMA_PATH'] = {active_schema_abs!r}
 
 from ui.app import UIApp
 
@@ -541,9 +547,8 @@ app.start(port={port})
             # Run the UI server in a subprocess
             self.ui_server_process = subprocess.Popen(
                 [sys.executable, "-c", ui_script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             
             # Give the server time to start
@@ -551,22 +556,46 @@ app.start(port={port})
             
             # Check if process is still running
             if self.ui_server_process.poll() is not None:
-                stdout, stderr = self.ui_server_process.communicate()
                 print(f"UI server failed to start:")
-                print(f"STDERR: {stderr}")
-                print(f"STDOUT: {stdout}")
+                print(f"Process exited with code: {self.ui_server_process.returncode}")
                 self.ui_server_process = None
                 return
             
             print(f"✓ UI server started on http://localhost:{port}")
             
-            # Open browser
-            try:
-                webbrowser.open(f"http://localhost:{port}")
-                print("✓ Browser opened (if not, visit http://localhost:{port})")
-            except Exception as e:
-                print(f"Could not open browser automatically: {e}")
-                print(f"Visit http://localhost:{port} manually")
+            # Open browser unless disabled by env var.
+            auto_open = os.getenv("SDMS_UI_AUTO_OPEN_BROWSER", "true").lower() == "true"
+            if auto_open:
+                ui_url = f"http://localhost:{port}"
+                opened = False
+
+                # Prefer xdg-open on Linux and silence browser stderr noise.
+                if sys.platform.startswith("linux"):
+                    xdg_open = shutil.which("xdg-open")
+                    if xdg_open:
+                        try:
+                            subprocess.Popen(
+                                [xdg_open, ui_url],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True,
+                            )
+                            opened = True
+                        except Exception:
+                            opened = False
+
+                if not opened:
+                    try:
+                        opened = bool(webbrowser.open(ui_url, new=2))
+                    except Exception:
+                        opened = False
+
+                if opened:
+                    print(f"✓ Browser opened (if not, visit {ui_url})")
+                else:
+                    print(f"Could not open browser automatically. Visit {ui_url} manually")
+            else:
+                print(f"Auto-open disabled. Visit http://localhost:{port} manually")
             
         except Exception as exc:
             print(f"Failed to launch UI server: {exc}")

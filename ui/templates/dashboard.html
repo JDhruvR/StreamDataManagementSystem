@@ -1,121 +1,142 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Stream Data Management System - Dashboard</title>
+    <link rel="icon" href="data:," />
     <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+  </head>
+  <body>
     <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <h1>Stream Data Management System</h1>
-                <p class="subtitle">Real-time Query Output Visualization Dashboard</p>
-            </div>
-            <div class="header-status">
-                <span id="status-indicator" class="status-dot" title="System Status"></span>
-                <span id="status-text">Initializing...</span>
-            </div>
+      <!-- Header -->
+      <div class="header">
+        <div class="header-content">
+          <h1>Stream Data Management System</h1>
+          <p class="subtitle">Real-time Query Output Visualization Dashboard</p>
+        </div>
+        <div class="header-status">
+          <span
+            id="status-indicator"
+            class="status-dot"
+            title="System Status"
+          ></span>
+          <span id="status-text">Initializing...</span>
+        </div>
+      </div>
+
+      <!-- Control Panel -->
+      <div class="control-panel">
+        <div class="control-group">
+          <label for="query-selector">Select Query:</label>
+          <select id="query-selector">
+            <option value="">Loading queries...</option>
+          </select>
         </div>
 
-        <!-- Control Panel -->
-        <div class="control-panel">
-            <div class="control-group">
-                <label for="query-selector">Select Query:</label>
-                <select id="query-selector">
-                    <option value="">Loading queries...</option>
-                </select>
-            </div>
-
-            <div class="control-group">
-                <label for="viz-selector">Visualization Type:</label>
-                <select id="viz-selector">
-                    <option value="timeseries">Time-Series Chart</option>
-                    <option value="bar">Bar Chart</option>
-                    <option value="gauge">Real-Time Gauge</option>
-                    <option value="heatmap">Heatmap</option>
-                </select>
-            </div>
-
-            <div class="control-group">
-                <label for="data-source">Data Source:</label>
-                <select id="data-source">
-                    <option value="live">Live (Kafka)</option>
-                    <option value="history">Historical (SQLite)</option>
-                </select>
-            </div>
-
-            <div class="control-group">
-                <label for="refresh-interval">Refresh Interval (ms):</label>
-                <input type="number" id="refresh-interval" min="500" step="500" value="1000">
-            </div>
-
-            <div class="control-group">
-                <label>
-                    <input type="checkbox" id="auto-refresh-toggle" checked>
-                    Auto-Refresh
-                </label>
-            </div>
-
-            <div class="control-group">
-                <button id="refresh-button" class="btn btn-primary">Refresh Now</button>
-                <button id="schema-button" class="btn btn-secondary">View Schema</button>
-            </div>
+        <div class="control-group">
+          <label for="viz-selector">Visualization Type:</label>
+          <select id="viz-selector">
+            <option value="timeseries">Time-Series Chart</option>
+            <option value="bar">Bar Chart</option>
+            <option value="gauge">Real-Time Gauge</option>
+            <option value="heatmap">Heatmap</option>
+          </select>
         </div>
 
-        <!-- Main Content Area -->
-        <div class="main-content">
-            <!-- Visualization Area -->
-            <div class="visualization-panel">
-                <div id="chart" class="chart-container"></div>
-            </div>
-
-            <!-- Info Panel -->
-            <div class="info-panel">
-                <div class="info-section">
-                    <h3>Query Info</h3>
-                    <div id="query-info" class="info-content">
-                        <p>Select a query to view details</p>
-                    </div>
-                </div>
-
-                <div class="info-section">
-                    <h3>Buffer Status</h3>
-                    <div id="buffer-status" class="info-content">
-                        <p>Loading...</p>
-                    </div>
-                </div>
-
-                <div class="info-section">
-                    <h3>Data Table</h3>
-                    <div id="data-table" class="data-table-container">
-                        <p>No data selected</p>
-                    </div>
-                </div>
-            </div>
+        <div class="control-group">
+          <label for="data-source">Data Source:</label>
+          <select id="data-source">
+            <option value="live">Live (Kafka)</option>
+            <option value="history">Historical (SQLite)</option>
+          </select>
         </div>
 
-        <!-- Footer -->
-        <div class="footer">
-            <p>&copy; 2024 Stream Data Management System | <span id="footer-status">Ready</span></p>
+        <div class="control-group">
+          <label for="refresh-interval">Refresh Interval (ms):</label>
+          <input
+            type="number"
+            id="refresh-interval"
+            min="500"
+            step="500"
+            value="1000"
+          />
         </div>
+
+        <div class="control-group">
+          <label>
+            <input type="checkbox" id="auto-refresh-toggle" checked />
+            Auto-Refresh
+          </label>
+        </div>
+
+        <div class="control-group">
+          <button id="refresh-button" class="btn btn-primary">
+            Refresh Now
+          </button>
+          <button id="schema-button" class="btn btn-secondary">
+            View Schema
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Content Area -->
+      <div class="main-content">
+        <!-- Visualization Area -->
+        <div class="visualization-panel">
+          <div id="chart" class="chart-container"></div>
+        </div>
+
+        <!-- Info Panel -->
+        <div class="info-panel">
+          <div class="info-section">
+            <h3>Query Info</h3>
+            <div id="query-info" class="info-content">
+              <p>Select a query to view details</p>
+            </div>
+          </div>
+
+          <div class="info-section">
+            <h3>Buffer Status</h3>
+            <div id="buffer-status" class="info-content">
+              <p>Loading...</p>
+            </div>
+          </div>
+
+          <div class="info-section">
+            <h3>Data Table</h3>
+            <div id="data-table" class="data-table-container">
+              <p>No data selected</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <p>
+          &copy; 2024 Stream Data Management System |
+          <span id="footer-status">Ready</span>
+        </p>
+      </div>
     </div>
 
     <!-- Schema Modal -->
     <div id="schema-modal" class="modal">
-        <div class="modal-content">
-            <span class="close">&times;</span>
-            <h2>Active Schema</h2>
-            <div id="schema-content"></div>
-        </div>
+      <div class="modal-content">
+        <span class="close">&times;</span>
+        <h2>Active Schema</h2>
+        <div id="schema-content"></div>
+      </div>
     </div>
 
     <!-- Scripts -->
     <script src="{{ url_for('static', filename='js/data-mapper.js') }}"></script>
     <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
-</body>
+  </body>
 </html>

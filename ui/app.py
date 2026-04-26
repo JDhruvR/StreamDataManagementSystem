@@ -9,14 +9,16 @@ Provides REST API endpoints for:
 """
 
 import logging
+import os
 from typing import Dict, Any, Optional
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, Response
 from flask_cors import CORS
 
 from ui.config import config
 from ui.data_buffer import QueryOutputBuffer
 from ui.kafka_consumer import KafkaOutputConsumer
 from ui.db_service import DatabaseService
+from core.schema.schema_manager import SchemaManager
 from core.execution.schema_registry import get_global_registry
 
 
@@ -30,9 +32,8 @@ class UIApp:
     
     def __init__(self):
         """Initialize the UI application."""
-        self.flask_app = Flask(__name__, 
-                               template_folder="ui/templates",
-                               static_folder="ui/static")
+        # Paths are relative to this module's package root (ui/).
+        self.flask_app = Flask(__name__, template_folder="templates", static_folder="static")
         
         # Enable CORS for API endpoints
         CORS(self.flask_app)
@@ -46,11 +47,36 @@ class UIApp:
         )
         self.db_service = DatabaseService(config.SQLITE_DB_PATH)
         self.registry = get_global_registry()
+
+        # If UI runs in a separate process, hydrate registry from active schema file.
+        self._bootstrap_schema_from_env()
         
         # Register routes
         self._register_routes()
         
         logger.info("UIApp initialized")
+
+    def _bootstrap_schema_from_env(self) -> None:
+        """Load active schema into registry when provided via environment."""
+        schema_path = os.getenv("SDMS_ACTIVE_SCHEMA_PATH", "").strip()
+        if not schema_path:
+            return
+
+        try:
+            schema = SchemaManager().load_from_file(schema_path)
+            schema_name = schema.get("schema_name")
+            if not schema_name:
+                logger.warning("Schema at '%s' has no schema_name; skipping bootstrap", schema_path)
+                return
+
+            if schema_name in self.registry.schemas:
+                self.registry.replace_schema(schema)
+            else:
+                self.registry.register_schema(schema)
+
+            logger.info("Bootstrapped active schema '%s' from %s", schema_name, schema_path)
+        except Exception as exc:
+            logger.warning("Failed to bootstrap schema from '%s': %s", schema_path, exc)
     
     def _register_routes(self) -> None:
         """Register all Flask routes and API endpoints."""
@@ -63,6 +89,11 @@ class UIApp:
             except Exception as e:
                 logger.error(f"Error rendering dashboard: {e}")
                 return {"error": str(e)}, 500
+
+        @self.flask_app.route("/favicon.ico", methods=["GET"])
+        def favicon():
+            """Return an empty favicon response to avoid browser ORB warnings."""
+            return Response(status=204)
         
         @self.flask_app.route("/api/config", methods=["GET"])
         def get_config():
@@ -116,6 +147,9 @@ class UIApp:
                 for query in queries:
                     output_stream_name = query.get("output_stream")
                     output_topic = output_streams.get(output_stream_name, {}).get("topic", output_stream_name)
+                    input_streams = query.get("input_streams", [])
+                    if isinstance(input_streams, set):
+                        input_streams = sorted(input_streams)
                     
                     query_info = {
                         "name": query.get("name"),
@@ -123,7 +157,7 @@ class UIApp:
                         "output_stream": output_stream_name,
                         "output_topic": output_topic,
                         "sql": query.get("query_plan", {}).get("raw", ""),
-                        "input_streams": query.get("input_streams", []),
+                        "input_streams": input_streams,
                     }
                     query_list.append(query_info)
                 
@@ -312,7 +346,7 @@ class UIApp:
             
             # Get first active schema (in production, track which one is active)
             schema_name = list(schemas.keys())[0]
-            return self.registry.get_schema(schema_name)
+            return self.registry.get_engine(schema_name)
         except Exception as e:
             logger.error(f"Error getting active engine: {e}")
             return None
