@@ -3,6 +3,10 @@
  */
 
 class ChartRenderer {
+    static makeSafeId(text) {
+        return String(text).replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
     /**
      * Render a chart in a container
      * @param {String} containerId - DOM element ID
@@ -50,6 +54,16 @@ class ChartRenderer {
     }
 
     /**
+     * Clear all chart cards from a chart host.
+     * @param {String} hostContainerId - Parent host ID
+     */
+    static clearChartHost(hostContainerId) {
+        const host = document.getElementById(hostContainerId);
+        if (!host) return;
+        host.innerHTML = '<div class="chart-container"><p style="text-align: center; color: #999;">No data to display</p></div>';
+    }
+
+    /**
      * Render from chart data object
      * @param {String} containerId - DOM element ID
      * @param {Object} chartData - Object with {data, layout}
@@ -59,6 +73,44 @@ class ChartRenderer {
             this.renderChart(containerId, chartData.data, chartData.layout);
         } else {
             this.clearChart(containerId);
+        }
+    }
+
+    /**
+     * Render multiple chart cards in a host container.
+     * @param {String} hostContainerId - Host DOM element ID
+     * @param {Array} groupedCharts - Array of {id, label, chartData}
+     * @param {String} vizType - Current visualization type
+     */
+    static renderGroupedCharts(hostContainerId, groupedCharts, vizType) {
+        const host = document.getElementById(hostContainerId);
+        if (!host) {
+            console.error(`Container '${hostContainerId}' not found`);
+            return;
+        }
+
+        if (!groupedCharts || groupedCharts.length === 0) {
+            this.clearChartHost(hostContainerId);
+            return;
+        }
+
+        host.innerHTML = '';
+
+        for (const group of groupedCharts) {
+            const safeId = this.makeSafeId(group.id || group.label || 'chart');
+            const chartId = `chart-${safeId}`;
+
+            const card = document.createElement('div');
+            card.className = 'chart-card';
+            card.innerHTML = `
+                <div class="chart-card-header">
+                    <h4>${this.escapeHtml(group.label || 'Chart')}</h4>
+                    <span class="chart-card-meta">${this.escapeHtml(vizType)}</span>
+                </div>
+                <div id="${chartId}" class="chart-container"></div>
+            `;
+            host.appendChild(card);
+            this.renderFromChartData(chartId, group.chartData);
         }
     }
 

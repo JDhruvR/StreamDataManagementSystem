@@ -135,7 +135,7 @@ class Dashboard {
      */
     async refreshData() {
         if (!this.currentQuery) {
-            ChartRenderer.clearChart('chart');
+            ChartRenderer.clearChartHost('chart-host');
             return;
         }
 
@@ -155,16 +155,16 @@ class Dashboard {
 
             if (data.error) {
                 this.showError(data.error);
-                ChartRenderer.clearChart('chart');
+                ChartRenderer.clearChartHost('chart-host');
                 this.updateQueryInfo({});
                 this.updateBufferStatus({});
                 this.updateDataTable([]);
                 return;
             }
 
-            // Map data to chart
-            const chartData = DataMapper.mapEventsToChartData(data.data, this.currentVizType);
-            ChartRenderer.renderFromChartData('chart', chartData);
+            // Map data to charts (grouped by id when available)
+            const chartGroups = DataMapper.mapEventsToPerIdChartGroups(data.data, this.currentVizType);
+            ChartRenderer.renderGroupedCharts('chart-host', chartGroups, this.currentVizType);
 
             // Update query info
             this.updateQueryInfo(data);

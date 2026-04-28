@@ -3,6 +3,8 @@
  */
 
 class DataMapper {
+    static MAX_ID_GROUPS = 12;
+
     /**
      * Parse and map event data for visualization
      * @param {Array} events - Array of event objects
@@ -26,6 +28,42 @@ class DataMapper {
             default:
                 return this.mapToTimeSeries(events);
         }
+    }
+
+    /**
+     * Map events into chart payloads grouped by an identity field.
+     * Falls back to a single chart when no identity field exists.
+     * @param {Array} events - Event objects
+     * @param {String} vizType - Visualization type
+     * @returns {Array} Array of grouped chart payloads
+     */
+    static mapEventsToPerIdChartGroups(events, vizType) {
+        if (!events || events.length === 0) {
+            return [{
+                id: 'all',
+                label: 'All Events',
+                chartData: this.getEmptyChartData(vizType),
+            }];
+        }
+
+        const identityField = this.findIdentityField(events);
+        if (!identityField) {
+            return [{
+                id: 'all',
+                label: 'All Events',
+                chartData: this.mapEventsToChartData(events, vizType),
+            }];
+        }
+
+        const grouped = this.groupEventsByField(events, identityField);
+        const orderedIds = Object.keys(grouped).sort();
+        const limitedIds = orderedIds.slice(0, this.MAX_ID_GROUPS);
+
+        return limitedIds.map(idValue => ({
+            id: `${identityField}:${idValue}`,
+            label: `${identityField}=${idValue}`,
+            chartData: this.mapEventsToChartData(grouped[idValue], vizType),
+        }));
     }
 
     /**
@@ -296,6 +334,34 @@ class DataMapper {
                 return key;
             }
         }
+        return null;
+    }
+
+    /**
+     * Find an identity-like field in events, preferring `id`.
+     * @param {Array} events - Event objects
+     * @returns {String|null} Identity field name
+     */
+    static findIdentityField(events) {
+        if (events.length === 0) return null;
+
+        const preferredFields = ['id', 'device_id', 'sensor_id', 'vehicle_id'];
+        const firstEvent = events[0];
+        const keys = Object.keys(firstEvent).filter(k => !k.startsWith('_sdms_'));
+
+        for (const candidate of preferredFields) {
+            if (keys.includes(candidate)) {
+                return candidate;
+            }
+        }
+
+        for (const key of keys) {
+            const distinctValues = new Set(events.map(event => this.getNestedValue(event, key)));
+            if (distinctValues.size > 1 && distinctValues.size <= Math.max(2, Math.floor(events.length * 0.8))) {
+                return key;
+            }
+        }
+
         return null;
     }
 

@@ -203,6 +203,39 @@ body {
     position: relative;
 }
 
+.chart-host {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+}
+
+.chart-card {
+    border: 1px solid var(--background);
+    border-radius: 8px;
+    padding: 12px;
+    background-color: #fff;
+}
+
+.chart-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.chart-card-header h4 {
+    margin: 0;
+    font-size: 14px;
+    color: var(--primary-color);
+}
+
+.chart-card-meta {
+    font-size: 11px;
+    color: #7f8c8d;
+    text-transform: uppercase;
+}
+
 /* Info Panel */
 .info-panel {
     display: flex;
@@ -406,6 +439,11 @@ body {
 
     .chart-container {
         height: 400px;
+    }
+
+    .chart-card-header {
+        flex-direction: column;
+        align-items: flex-start;
     }
 
     .modal-content {
