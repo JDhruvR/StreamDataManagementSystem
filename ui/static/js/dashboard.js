@@ -11,6 +11,7 @@ class Dashboard {
         this.refreshInterval = 1000;
         this.autoRefreshTimer = null;
         this.schemaData = null;
+        this.queryMetadata = {};
 
         this.init();
     }
@@ -114,6 +115,7 @@ class Dashboard {
                 option.value = query.name;
                 option.textContent = `${query.name} (${query.output_stream})`;
                 selector.appendChild(option);
+                this.queryMetadata[query.name] = query;
             }
 
             // Auto-select first query
@@ -163,7 +165,12 @@ class Dashboard {
             }
 
             // Map data to charts (grouped by id when available)
-            const chartGroups = DataMapper.mapEventsToPerIdChartGroups(data.data, this.currentVizType);
+            const preferredGroupField = this.getPreferredGroupField(data.data);
+            const chartGroups = DataMapper.mapEventsToPerIdChartGroups(
+                data.data,
+                this.currentVizType,
+                preferredGroupField
+            );
             ChartRenderer.renderGroupedCharts('chart-host', chartGroups, this.currentVizType);
 
             // Update query info
@@ -343,6 +350,62 @@ class Dashboard {
         if (this.autoRefreshEnabled) {
             this.startAutoRefresh();
         }
+    }
+
+    /**
+     * Determine preferred field for per-graph grouping.
+     * For join queries, prefer join key inferred from SQL ON clause.
+     * @param {Array} events - Query output events
+     * @returns {String|null} Preferred grouping field
+     */
+    getPreferredGroupField(events) {
+        if (!events || events.length === 0 || !this.currentQuery) {
+            return null;
+        }
+
+        const query = this.queryMetadata[this.currentQuery];
+        if (!query || !query.sql) {
+            return null;
+        }
+
+        const joinKey = this.extractJoinKeyFromSql(query.sql);
+        if (!joinKey) {
+            return null;
+        }
+
+        const eventKeys = Object.keys(events[0] || {});
+        const exactMatch = eventKeys.find(k => k === joinKey);
+        if (exactMatch) return exactMatch;
+
+        const lowerJoinKey = joinKey.toLowerCase();
+        const caseInsensitiveMatch = eventKeys.find(k => k.toLowerCase() === lowerJoinKey);
+        return caseInsensitiveMatch || null;
+    }
+
+    /**
+     * Extract join key from SQL ON clause.
+     * Example: ON vehicle.junctionid = signal.junctionid -> junctionid
+     * @param {String} sql - Raw SQL text
+     * @returns {String|null} Join key name
+     */
+    extractJoinKeyFromSql(sql) {
+        if (!sql || typeof sql !== 'string') {
+            return null;
+        }
+
+        const onClauseRegex = /\bon\s+([a-zA-Z0-9_.]+)\s*=\s*([a-zA-Z0-9_.]+)/ig;
+        let match;
+        while ((match = onClauseRegex.exec(sql)) !== null) {
+            const left = match[1];
+            const right = match[2];
+            const leftField = left.split('.').pop();
+            const rightField = right.split('.').pop();
+            if (leftField && rightField && leftField.toLowerCase() === rightField.toLowerCase()) {
+                return leftField;
+            }
+        }
+
+        return null;
     }
 }
 

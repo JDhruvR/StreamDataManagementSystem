@@ -37,7 +37,7 @@ class DataMapper {
      * @param {String} vizType - Visualization type
      * @returns {Array} Array of grouped chart payloads
      */
-    static mapEventsToPerIdChartGroups(events, vizType) {
+    static mapEventsToPerIdChartGroups(events, vizType, preferredField = null) {
         if (!events || events.length === 0) {
             return [{
                 id: 'all',
@@ -46,7 +46,7 @@ class DataMapper {
             }];
         }
 
-        const identityField = this.findIdentityField(events);
+        const identityField = this.findIdentityField(events, preferredField);
         if (!identityField) {
             return [{
                 id: 'all',
@@ -342,16 +342,30 @@ class DataMapper {
      * @param {Array} events - Event objects
      * @returns {String|null} Identity field name
      */
-    static findIdentityField(events) {
+    static findIdentityField(events, preferredField = null) {
         if (events.length === 0) return null;
 
-        const preferredFields = ['id', 'device_id', 'sensor_id', 'vehicle_id'];
+        const preferredFields = [
+            preferredField,
+            'id',
+            'junctionid',
+            'junction_id',
+            'device_id',
+            'sensor_id',
+            'vehicle_id'
+        ].filter(Boolean);
         const firstEvent = events[0];
         const keys = Object.keys(firstEvent).filter(k => !k.startsWith('_sdms_'));
 
         for (const candidate of preferredFields) {
-            if (keys.includes(candidate)) {
-                return candidate;
+            const exact = keys.find(k => k === candidate);
+            if (exact) {
+                return exact;
+            }
+            const lower = String(candidate).toLowerCase();
+            const caseInsensitive = keys.find(k => k.toLowerCase() === lower);
+            if (caseInsensitive) {
+                return caseInsensitive;
             }
         }
 
