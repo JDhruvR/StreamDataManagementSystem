@@ -419,3 +419,9 @@ def create_app() -> Flask:
     """Factory function to create the Flask application."""
     ui_app = UIApp()
     return ui_app.get_flask_app()
+
+
+if __name__ == "__main__":
+    app = UIApp()
+    app.initialize_kafka_consumer()
+    app.start(host="127.0.0.1", port=5000, debug=False)

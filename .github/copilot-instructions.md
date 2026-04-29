@@ -30,57 +30,65 @@ kafka_2.13-3.6.1/bin/kafka-server-start.sh kafka_2.13-3.6.1/config/server.proper
 # Terminal 3: Run sensor simulator
 python -m sensors.pollution_sensor
 
-# Terminal 4: Run system
-python -m examples.run_system
+# Terminal 4: Run interactive CLI (v1.1+)
+python -m examples.cli
 ```
 
 ### Running Tests
 ```bash
-pytest test_ast.py -v
+pytest -q
 pytest -v
 ```
 
 ## Architecture
 
-### Four-Stage Pipeline
+### Six-Stage Pipeline (v1.1+)
 
-1. **Data Generation** (`sensors/pollution_sensor.py`)
-   - Simulates IoT sensor readings for pollution data
-   - Publishes to Kafka topic: `pollution_stream`
-   - JSON format: `{"sensor_id": "...", "timestamp": "...", "pollutant": "...", "value": ...}`
+1. **Data Generation** (`sensors/pollution_sensor.py`, `sensors/weather_sensor.py`)
+   - Simulates IoT sensor readings (pollution, weather)
+   - Publishes to Kafka topics: `pollution_stream`, `weather_stream`
+   - JSON format: `{"sensor_id": "...", "timestamp": "...", "value": ...}`
 
-2. **Message Streaming** (`streaming/kafka_client.py`)
-   - Kafka producer: Wraps kafka-python-ng for message publishing
-   - Kafka consumer: Background thread (run_kafka_consumer) feeds messages to engine
-   - Topic: `pollution_stream` (default)
+2. **Schema Configuration** (`schemas/*.json`)
+   - JSON defines all aspects: input/output streams, queries, window, velocity
+   - Loaded via SchemaManager
+   - Validated before deployment
 
-3. **Query Parsing** (`core/parser/`)
-   - **grammar.lark**: Defines SQL-like DSL grammar (SELECT, WHERE, WINDOW, GROUP BY, etc.)
-   - **sql_parser.py**: SQLTransformer converts Lark tree to AST with operators and options
-   - Output: Dictionary with keys `operators` (list), `options` (dict), and other metadata
+3. **Schema Registry & Deployment** (`core/execution/schema_registry.py`)
+   - Registers schemas with ExecutionEngine
+   - Supports multiple concurrent schemas
+   - Isolated stream and query namespaces per schema
 
-4. **Execution Engine** (`core/execution/`)
-   - **engine.py**: ExecutionEngine orchestrates the pipeline
-     - `execute_query()`: Takes parsed AST and sets up operator chain
-     - `process_event()`: Processes incoming Kafka message through operator chain
+4. **Query Parsing** (`core/parser/`)
+   - **grammar.lark**: SQL-like DSL (SELECT, WHERE, JOIN, GROUP BY, aggregates)
+   - **sql_parser.py**: SQLTransformer converts Lark tree to structured AST
+   - Output: Dictionary with query type, fields, conditions, joins
+
+5. **Execution Engine** (`core/execution/`)
+   - **engine.py**: ExecutionEngine orchestrates operator pipeline per query
+      - `initialize_from_schema()`: Builds all operator chains from schema
+      - `process_event()`: Routes event by stream membership to all queries
    - **operators.py**: Chain-of-responsibility pattern
-     - Abstract `Operator` base class with `process()` method
-     - Concrete operators: `FilterOperator`, `WindowOperator`, `AggregateOperator`, `SinkOperator`
-     - Each operator calls `self.next_op.process()` if conditions met
+      - Abstract `Operator` base class with `process()` method
+      - Concrete operators: FilterOperator, JoinOperator, WindowOperator, AggregateOperator, ProjectionOperator, SinkOperator
+      - Each operator calls `self.next_op.process()` if conditions met
 
-5. **Storage & Output** (`core/storage/table.py`)
-   - TableManager handles SQLite-based result persistence
-   - SinkOperator writes aggregated results to tables
-   - Alert callbacks invoke on matching results
+6. **Output & Storage**
+   - **Kafka**: SinkOperator writes to output topics
+   - **SQLite**: Reference tables in `data/static_tables.db` via TableManager
+   - **CLI**: Interactive results display
 
 ### Key Data Flow
 
 ```
-Sensor → Kafka Topic → Background Consumer Thread → ExecutionEngine
-                                                             ↓
-                                              Operator Chain (Filter → Window → Aggregate → Sink)
-                                                             ↓
-                                                    Storage or Callback
+Sensors → Kafka Topics → Schema Registry → Execution Engine
+                                               ↓
+                                   Operator Chains (per query)
+                                   ├─ Filter → Window → Aggregate → Sink → Kafka
+                                   ├─ Join → Filter → Projection → Sink → Kafka
+                                   └─ ...
+                                               ↓
+                                   Output Topics + Reference Tables
 ```
 
 ## Code Conventions
@@ -113,19 +121,37 @@ Sensor → Kafka Topic → Background Consumer Thread → ExecutionEngine
    - Example: `alert_callback` passed to SinkOperator
    - Allows flexible output without tight coupling
 
-### File Structure
+## File Structure
 
 ```
 core/
-  ├── parser/           # SQL parsing (grammar.lark, sql_parser.py)
-  ├── execution/        # Engine & operators (engine.py, operators.py)
-  └── storage/          # SQLite management (table.py)
+  ├── schema/             # Schema loading/validation (SchemaManager)
+  ├── execution/          # Engine, operators, registry
+  │   ├── engine.py
+  │   ├── operators.py
+  │   └── schema_registry.py
+  └── parser/             # SQL parsing (grammar.lark, sql_parser.py)
 streaming/
-  └── kafka_client.py   # Kafka producer/consumer wrappers
+  ├── kafka_client.py     # Kafka producer/consumer
+  └── kafka_config.py     # Kafka configuration
 sensors/
-  └── pollution_sensor.py  # Mock sensor data generator
+  ├── pollution_sensor.py
+  └── weather_sensor.py
 examples/
-  └── run_system.py     # End-to-end demo
+  ├── cli.py              # Interactive schema/query/table management
+  └── run_system.py       # Non-interactive runner
+schemas/
+  ├── pollution_schema.json
+  ├── pollution2.json
+  └── stream_join_demo.json
+data/
+  └── static_tables.db    # SQLite reference tables
+tests/
+  └── test_*.py           # Unit & integration tests
+docs/
+  ├── setup/              # Installation guides
+  ├── guides/             # Architecture & extension
+  └── lessons/            # History & decisions
 ```
 
 ## Important Implementation Notes
@@ -133,34 +159,36 @@ examples/
 ### Parser & Query Execution
 - **Grammar file**: `core/parser/grammar.lark` defines supported SQL syntax
 - **Transformation**: `SQLTransformer` in `sql_parser.py` converts parse tree to execution AST
-- **AST Format**: Dictionary with `operators` list, `options` dict, and other metadata
-- **Options syntax**: `WITH (key="value")` in SELECT statement
+- **AST Format**: Dictionary with `type`, `select`, `from`, `where`, `join` fields
+- **Schema-based**: All queries pre-defined in schema (no ad-hoc execution API)
 
 ### Operator Chain Execution
-- **Initialization**: `ExecutionEngine.execute_query()` builds operator chain from AST
-- **Processing**: Each event flows through chain via `process()` calls
-- **Termination**: SinkOperator is final stage (no next_op)
+- **Initialization**: `ExecutionEngine.initialize_from_schema()` builds all operator chains from schema
+- **Processing**: `process_event(schema_name, stream_name, event)` routes event to relevant queries
+- **Termination**: SinkOperator writes to Kafka or callback
 - **Conditional Flow**: Operators only call `self.next_op.process()` if event passes their condition
 
 ### Kafka Integration
 - **Producer** (sensors): Publishes raw sensor readings
-- **Consumer** (engine): Runs in background thread, decodes JSON, calls `engine.process_event()`
+- **Consumer** (streaming/kafka_client.py): Background thread decodes JSON, feeds to engine
 - **Serialization**: JSON for message format
-- **Topic**: `pollution_stream` (configurable via query options)
+- **Topics**: Multiple input/output topics per schema, defined in JSON config
+- **Mode**: Ephemeral (no persistence by default, retention.ms=1)
 
-### Storage & Results
-- **SQLite**: TableManager uses built-in Python sqlite3
-- **Result Tables**: Created per query, named by user (e.g., `pollution_alerts`)
-- **Aggregation**: Results written via SinkOperator callback to TableManager
+### Schema & Registry
+- **SchemaManager** (`core/schema/schema_manager.py`): Loads/validates JSON schemas
+- **SchemaRegistry** (`core/execution/schema_registry.py`): Manages schema lifecycle
+- **Multiple Schemas**: Run concurrently with isolated namespaces
+- **Event Routing**: Engine routes by stream membership, not query name
 
 ## Known Limitations
 
-- **No JOIN support**: Queries work on single streams only
+- **Stream Joins**: Stream-stream and stream-table INNER JOINs are fully supported
 - **GROUP BY**: Simplified implementation, not all use cases supported
-- **WINDOW**: SLIDING windows use simplified time handling
-- **Error Handling**: Basic try/catch, limited recovery
-- **State**: No persisted operator state across restarts
-- **Test Coverage**: Only `test_ast.py` with minimal tests; add comprehensive test suite as needed
+- **SLIDING windows**: Use TUMBLING by default
+- **Error Handling**: Basic validation, limited recovery
+- **State**: No operator state persistence across restarts
+- **Event-time**: Processing-time only (watermarking not supported)
 
 ## Extension Points
 
@@ -193,37 +221,69 @@ See `requirements.txt` for full list.
 
 ## Documentation References
 
-- `walkthrough.md`: Step-by-step guide on how the system works
-- `implementationPlan.txt`: Design specification and scope
-- `examples/run_system.py`: Working end-to-end example to understand flow
+- **docs/setup.md**: Installation, prerequisites, running guides
+- **docs/guides.md**: Architecture, extending system, join reference, schema format
+- **docs/lessons.md**: Release notes, design decisions, implementation status, feature summary
+- **examples/cli.py**: Working interactive deployment example
+- **examples/run_system.py**: Non-interactive runner example
 
 ## Common Tasks
 
-### Running a Query
-```python
-from core.parser.sql_parser import SQLParser
-from core.execution.engine import ExecutionEngine
-from streaming.kafka_client import KafkaConsumer
-
-parser = SQLParser()
-ast = parser.parse("SELECT * FROM pollution_stream WHERE value > 50")
-
-engine = ExecutionEngine(ast)
-consumer = KafkaConsumer(topic="pollution_stream")
-
-for message in consumer:
-    engine.process_event(message)
+### Running a Query (via CLI)
+```bash
+python -m examples.cli
 ```
 
-### Adding an Alert Callback
-```python
-def my_alert(result):
-    print(f"Alert: {result}")
+At prompt:
+```
+load schemas/pollution2.json
+status
+query
+query> SELECT sensor_id, AVG(value) FROM pollution_stream WHERE value > 50
+query_name> avg_query
+output_stream> output
+save
+```
 
-engine.sink_callback = my_alert
+### Creating a Schema
+```json
+{
+  "schema_name": "my_schema",
+  "window_size": 10,
+  "window_unit": "seconds",
+  "velocity": {"type": "count", "value": 100},
+  "input_streams": [
+    {"name": "my_stream", "topic": "my_topic", "schema": {"id": "STRING", "value": "FLOAT"}}
+  ],
+  "continuous_queries": [
+    {
+      "name": "my_query",
+      "input_stream": "my_stream",
+      "output_stream": "output",
+      "query": "SELECT id, AVG(value) FROM my_stream WHERE value > 0"
+    }
+  ],
+  "output_streams": [
+    {"name": "output", "topic": "output", "schema": {"id": "STRING", "AVG(value)": "FLOAT"}}
+  ]
+}
+```
+
+### Stream-to-Stream Join
+```sql
+SELECT pollution.sensor_id, pollution.value, weather.humidity
+FROM pollution_stream INNER JOIN weather_stream ON sensor_id = sensor_id
+WHERE pollution.value > 50
+```
+
+### Stream-to-Table Join
+```sql
+SELECT pollution.value, sensor.name
+FROM pollution_stream INNER JOIN sensors ON sensor_id = id
 ```
 
 ### Debugging
-- Enable logging in Kafka consumer with print statements in `run_kafka_consumer()`
-- Check operator chain order via `engine.operators` list
-- Print event as it flows through operators in `process()` method
+- Check schema validation: `status` in CLI
+- View operator chain: Print `engine.queries[query_name]` object
+- Trace event flow: Add print statements in operator `process()` methods
+- Test parsing: `python -c "from core.parser.sql_parser import SQLParser; p = SQLParser(); print(p.parse('SELECT * FROM stream'))"`

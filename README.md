@@ -2,86 +2,107 @@
 
 Schema-first streaming engine with continuous SQL-style queries, stream joins, and SQLite reference-table joins.
 
-## Easiest Run (Demo in 4 terminals)
+## What It Does
 
-### 0) Install dependencies
+Process event streams in real-time using pre-defined schemas. Define input streams, write SQL queries, and watch results flow to output topics. Supports both stream-to-stream and stream-to-table joins.
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.7+
+- Apache Kafka 3.6.1
+- Java
+
+### Setup (one-time)
+
 ```bash
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 1) Start Kafka
-Terminal A:
+### Run Demo
+
+Terminal 1 (Zookeeper):
 ```bash
 cd kafka_2.13-3.6.1
 bin/zookeeper-server-start.sh config/zookeeper.properties
 ```
 
-Terminal B:
+Terminal 2 (Kafka):
 ```bash
 cd kafka_2.13-3.6.1
 bin/kafka-server-start.sh config/server.properties
 ```
 
-### 2) Start sensor producer
-Terminal C:
+Terminal 3 (Sensor producer):
 ```bash
 python -m sensors.pollution_sensor
 ```
 
-### 2b) (For stream-stream join demo) Start weather producer
-Terminal D:
-```bash
-python -m sensors.weather_sensor
-```
-
-### 3) Start CLI
-Terminal E:
+Terminal 4 (Interactive CLI):
 ```bash
 python -m examples.cli
 ```
 
 At `sdms>` prompt:
-```text
+```
 load schemas/pollution2.json
 status
 ```
 
-### 4) Watch output topic
-Open another terminal (or reuse one):
+Terminal 5 (View results):
 ```bash
 cd kafka_2.13-3.6.1
 bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic pollution_out
 ```
 
-You should now see processed output events.
+## Key Features
 
-## Notes
+- Schema-based configuration (JSON)
+- Continuous SELECT queries only (no ad-hoc)
+- Stream-to-stream INNER JOIN
+- Stream-to-table INNER JOIN
+- Persistent SQLite reference tables
+- Window and velocity controls per schema
+- Interactive CLI for runtime schema/query deployment
 
-- Message queue mode is ephemeral-only (non-persistent) in runtime config.
-- Window and velocity are schema-level settings.
-- Supported joins:
-  - stream -> stream INNER JOIN
-  - stream -> SQLite table INNER JOIN
+## Documentation
 
-## Manual Stream-Stream Join Demo
+- [Setup & Running](docs/setup.md) - Installation, prerequisites, troubleshooting
+- [Architecture & Guides](docs/guides.md) - System design, how to extend, JOIN reference
+- [History & Decisions](docs/lessons.md) - Release notes, design decisions, feature summary
 
-1. Start `python -m sensors.pollution_sensor` and `python -m sensors.weather_sensor` in separate terminals.
-2. Start CLI: `python -m examples.cli`
-3. In CLI:
-```text
-load schemas/stream_join_demo.json
-status
-```
-4. Consume join output:
-```bash
-cd kafka_2.13-3.6.1
-bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic joined_out
-```
-
-## Run tests
+## Tests
 
 ```bash
 pytest -q
 ```
+Run these from inside StreamDataManagementSystem/:
+
+Terminal 1:
+
+cd kafka_2.13-3.6.1 && ./bin/zookeeper-server-start.sh config/zookeeper.properties
+
+Terminal 2:
+
+cd kafka_2.13-3.6.1 && ./bin/kafka-server-start.sh config/server.properties
+
+Terminal 3:
+
+source venv/bin/activate && python -m sensors.pollution_sensor
+
+Terminal 4:
+
+source venv/bin/activate && python -m examples.cli
+Then type: load schemas/pollution2.json
+
+Terminal 5:
+
+cd kafka_2.13-3.6.1 && ./bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic pollution_out --from-beginning
+
+Terminal 6:
+
+./run_ui.sh
+Then open http://127.0.0.1:5000 in browser.
