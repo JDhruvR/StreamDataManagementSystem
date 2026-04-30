@@ -79,6 +79,13 @@
             "input_stream": "vehicle_stream",
             "output_stream": "vehicle_speed_filter2_out",
             "query": "SELECT speed, junction_id FROM vehicle_stream WHERE lane=1 GROUP BY junction_id"
+        },
+        {
+            "name": "vehicle_when_red",
+            "description": "Filter: identify vehicles that arrive at a junction when the signal is red",
+            "input_stream": "vehicle_stream",
+            "output_stream": "vehicle_when_red_out",
+            "query": "SELECT speed, junction_id, signal_phase FROM vehicle_stream INNER JOIN signal_stream ON junction_id = junction_id WHERE signal_phase=\"RED\""
         }
     ],
     "output_streams": [
@@ -134,6 +141,15 @@
             "schema": {
                 "speed": "FLOAT",
                 "junction_id": "STRING"
+            }
+        },
+        {
+            "name": "vehicle_when_red_out",
+            "topic": "vehicle_when_red_out",
+            "schema": {
+                "speed": "FLOAT",
+                "junction_id": "STRING",
+                "signal_phase": "STRING"
             }
         }
     ]
