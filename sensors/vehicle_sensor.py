@@ -39,7 +39,7 @@ def main():
             count += 1
             print(f"[{count}] Sent vehicle event: {event['vehicle_id']} @ {event['junction_id']} "
                   f"speed={event['speed']} km/h  type={event['vehicle_type']}")
-            time.sleep(random.uniform(0.3, 1.5))
+            time.sleep(random.uniform(1, 2))
     except KeyboardInterrupt:
         print("Vehicle sensor stopped.")
     except Exception as e:

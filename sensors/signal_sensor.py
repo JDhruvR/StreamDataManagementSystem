@@ -55,7 +55,7 @@ def main():
                     current_idx = phase_cycle.index(junction_phases[junction_id])
                     junction_phases[junction_id] = phase_cycle[(current_idx + 1) % 3]
 
-            time.sleep(random.uniform(1.0, 3.0))
+            time.sleep(random.uniform(1.0, 2.0))
     except KeyboardInterrupt:
         print("Signal controller stopped.")
     except Exception as e:
