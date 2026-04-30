@@ -67,11 +67,18 @@
             "query": "SELECT junction_id, COUNT(vehicle_id), AVG(speed) FROM vehicle_stream GROUP BY junction_id"
         },
         {
-            "name": "vehicle when red",
+            "name": "vehicle_speed_filter",
             "description": "Filter: identify vehicles that arrive at a junction when the signal is red",
             "input_stream": "vehicle_stream",
-            "output_stream": "vehicle_when_red_out",
-            "query": "SELECT speed,vehicle_id FROM vehicle_stream WHERE speed>20"
+            "output_stream": "vehicle_speed_filter_out",
+            "query": "SELECT speed, vehicle_type FROM vehicle_stream WHERE speed>20 GROUP BY vehicle_type"
+        },
+        {
+            "name": "vehicle_speed_filter2",
+            "description": "Filter: identify vehicles that arrive at a junction when the signal is red",
+            "input_stream": "vehicle_stream",
+            "output_stream": "vehicle_speed_filter2_out",
+            "query": "SELECT speed, junction_id FROM vehicle_stream WHERE lane=1 GROUP BY junction_id"
         }
     ],
     "output_streams": [
@@ -110,8 +117,8 @@
             }
         },
         {
-            "name": "vehicle_when_red_out",
-            "topic": "vehicle_when_red_out",
+            "name": "vehicle_speed_filter_out",
+            "topic": "vehicle_speed_filter_out",
             "schema": {
                 "vehicle_id": "STRING",
                 "junction_id": "STRING",
@@ -119,6 +126,14 @@
                 "vehicle_type": "STRING",
                 "signal_phase": "STRING",
                 "congestion_level": "INT"
+            }
+        },
+        {
+            "name": "vehicle_speed_filter2_out",
+            "topic": "vehicle_speed_filter2_out",
+            "schema": {
+                "speed": "FLOAT",
+                "junction_id": "STRING"
             }
         }
     ]
