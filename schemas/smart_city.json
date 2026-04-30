@@ -1,10 +1,10 @@
 {
     "schema_name": "smart_city_traffic_demo",
-    "window_size": 15,
+    "window_size": 5,
     "window_unit": "seconds",
     "velocity": {
         "type": "time",
-        "value": 15
+        "value": 5
     },
     "window_type": "tumbling",
     "input_streams": [
@@ -57,7 +57,7 @@
             "description": "Stream-static join: enrich vehicle events with junction zone and speed limit metadata",
             "input_stream": "vehicle_stream",
             "output_stream": "zone_enriched_out",
-            "query": "SELECT vehicle_id, junction_id, speed, vehicle_type, zone, speed_limit, junction_name FROM vehicle_stream INNER JOIN junction_meta ON junction_id = junction_id"
+            "query": "SELECT vehicle_id, junction_id, speed, vehicle_type, zone, speed_limit, junction_name FROM vehicle_stream INNER JOIN junction_meta ON junction_id = junction_id GROUP BY junction_name"
         },
         {
             "name": "junction_vehicle_count",
@@ -65,6 +65,13 @@
             "input_stream": "vehicle_stream",
             "output_stream": "junction_stats_out",
             "query": "SELECT junction_id, COUNT(vehicle_id), AVG(speed) FROM vehicle_stream GROUP BY junction_id"
+        },
+        {
+            "name": "vehicle when red",
+            "description": "Filter: identify vehicles that arrive at a junction when the signal is red",
+            "input_stream": "vehicle_stream",
+            "output_stream": "vehicle_when_red_out",
+            "query": "SELECT speed,vehicle_id FROM vehicle_stream WHERE speed>20"
         }
     ],
     "output_streams": [
@@ -100,6 +107,18 @@
                 "junction_id": "STRING",
                 "COUNT(vehicle_id)": "INT",
                 "AVG(speed)": "FLOAT"
+            }
+        },
+        {
+            "name": "vehicle_when_red_out",
+            "topic": "vehicle_when_red_out",
+            "schema": {
+                "vehicle_id": "STRING",
+                "junction_id": "STRING",
+                "speed": "FLOAT",
+                "vehicle_type": "STRING",
+                "signal_phase": "STRING",
+                "congestion_level": "INT"
             }
         }
     ]
