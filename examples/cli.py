@@ -1,8 +1,5 @@
 """
 Interactive CLI for StreamDataManagementSystem.
-
-This CLI removes hard-coded query flow and allows users to deploy continuous
-SELECT queries at runtime.
 """
 
 import argparse
@@ -123,7 +120,7 @@ class StreamingCLI:
         if schema_path:
             self.load_schema_from_file(schema_path)
 
-    def load_schema_from_file(self, schema_path: str) -> None:
+    def load_schema_from_file(self, schema_path: str | None) -> None:
         """Load and activate a schema from file, or switch if already registered."""
         schema = self.schema_manager.load_from_file(schema_path)
         schema_name = schema["schema_name"]
